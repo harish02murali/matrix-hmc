@@ -299,12 +299,12 @@ class PIKKTTypeIIRHMCModel(MatrixModel):
             2 * dim_tr, device=config.device, dtype=config.dtype
         )
         if config.ENABLE_TORCH_COMPILE and hasattr(torch, "compile"):
-            self._force_impl = torch.compile(self._force_impl, dynamic=False)
+            self._force_impl = torch.compile(self._force_impl, dynamic=False, backend=config.TORCH_COMPILE_BACKEND)
             # Compile the hot CG matvec kernels individually: they are called
             # ~400 times per force step and contain Python control flow that
             # prevents them from being traced inside _force_impl's graph.
-            self._apply_K_vec = torch.compile(self._apply_K_vec, dynamic=False)
-            self._apply_K_dag_vec = torch.compile(self._apply_K_dag_vec, dynamic=False)
+            self._apply_K_vec = torch.compile(self._apply_K_vec, dynamic=False, backend=config.TORCH_COMPILE_BACKEND)
+            self._apply_K_dag_vec = torch.compile(self._apply_K_dag_vec, dynamic=False, backend=config.TORCH_COMPILE_BACKEND)
 
         coeffs = torch.full(
             (self.nmat,), self.omega / 3.0, dtype=config.real_dtype, device=config.device

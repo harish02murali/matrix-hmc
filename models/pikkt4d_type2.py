@@ -74,7 +74,7 @@ class PIKKTTypeIIModel(MatrixModel):
             2 * dim_tr, device=config.device, dtype=config.dtype
         )
         if config.ENABLE_TORCH_COMPILE and hasattr(torch, "compile"):
-            self._force_impl = torch.compile(self._force_impl, dynamic=False)
+            self._force_impl = torch.compile(self._force_impl, dynamic=False, backend=config.TORCH_COMPILE_BACKEND)
 
     def _effective_X(self, X: torch.Tensor) -> torch.Tensor:
         if not self.lorentzian:
@@ -286,7 +286,6 @@ class PIKKTTypeIIModel(MatrixModel):
         casimir = (
             torch.trace(X[0] @ X[0] + X[1] @ X[1] + X[2] @ X[2]) / self.ncol
         ).item().real
-        trX4 = (torch.trace(X[3] @ X[3]) / self.ncol).item().real
         trX34 = (torch.trace(X[2] @ X[2] - X[3] @ X[3]) / self.ncol).item().real
         return f"casimir = {casimir:.5f}, mom34 = {trX34:.5f}. "
 

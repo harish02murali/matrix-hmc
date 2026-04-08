@@ -92,7 +92,7 @@ class PIKKTTypeIModel(MatrixModel):
             return _type1_logdet_impl(X, model._type1_A)
 
         if config.ENABLE_TORCH_COMPILE and hasattr(torch, "compile"):
-            self._log_det_fn = torch.compile(base_fn, dynamic=False)
+            self._log_det_fn = torch.compile(base_fn, dynamic=False, backend=config.TORCH_COMPILE_BACKEND)
         else:
             self._log_det_fn = base_fn
 

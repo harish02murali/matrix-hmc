@@ -45,7 +45,7 @@ class AdjointDetModel(MatrixModel):
             return _fermion_det_log_identity_plus_sum_adX(X)
 
         if config.ENABLE_TORCH_COMPILE and hasattr(torch, "compile"):
-            self._log_det_fn = torch.compile(base_fn, dynamic=False)
+            self._log_det_fn = torch.compile(base_fn, dynamic=False, backend=config.TORCH_COMPILE_BACKEND)
         else:
             self._log_det_fn = base_fn
 
