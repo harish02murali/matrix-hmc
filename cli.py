@@ -44,6 +44,21 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--coupling", type=float, nargs="+", default=[100.0], help="Coupling g (can specify multiple, depending on model)")
     parser.add_argument("--no-gpu", action="store_true", dest="noGPU", default=False, help="Disable CUDA GPU even if available")
     parser.add_argument("--complex64", action="store_true", help="Use complex64/float32 precision instead of complex128/float64")
+    parser.add_argument(
+        "--compile",
+        dest="compile",
+        action="store_true",
+        default=None,
+        help="Enable torch.compile for supported model kernels",
+    )
+    parser.add_argument(
+        "--no-compile",
+        dest="compile",
+        action="store_false",
+        help="Disable torch.compile even if enabled via environment",
+    )
+    parser.add_argument("--threads", type=int, default=None, help="Set torch intra-op CPU thread count")
+    parser.add_argument("--interop-threads", type=int, default=None, help="Set torch inter-op CPU thread count")
     parser.add_argument("--name", type=str, default="run", help="Prefix for outputs")
     parser.add_argument("--step-size", type=float, dest="step_size", default=2, help="Leapfrog step size Δt")
     parser.add_argument("--nsteps", type=int, default=180, help="Leapfrog steps per trajectory")
@@ -73,7 +88,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     rhmc_group = parser.add_argument_group(
         "RHMC options", "Relevant for --model pikkt4d_type2_rhmc"
     )
-    rhmc_group.add_argument("--rhmc-order", type=int, default=12, help="Number of partial-fraction shifts")
+    rhmc_group.add_argument("--rhmc-order", type=int, default=20, help="Number of partial-fraction shifts")
     rhmc_group.add_argument(
         "--rhmc-lmin",
         type=float,
@@ -145,6 +160,10 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--step-size must be positive")
     if args.save_every < 1:
         raise ValueError("--save-every must be positive")
+    if args.threads is not None and args.threads < 1:
+        raise ValueError("--threads must be positive")
+    if args.interop_threads is not None and args.interop_threads < 1:
+        raise ValueError("--interop-threads must be positive")
     if args.source is not None and args.source.shape != (args.ncol,):
         raise ValueError(f"--source expression must evaluate to shape ({args.ncol},), got {args.source.shape}") 
 

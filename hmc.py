@@ -36,7 +36,10 @@ def leapfrog(X: torch.Tensor, hmc_params: HMCParams, model: Any) -> tuple[torch.
     if callable(begin_traj):
         begin_traj(X)
 
-    mom_X = torch.stack([random_hermitian(model.ncol) for _ in range(model.nmat)], dim=0)
+    mom_X = torch.stack(
+        [random_hermitian(model.ncol, traceless=bool(model.is_traceless)) for _ in range(model.nmat)],
+        dim=0,
+    )
     ham_init = hamil(X, mom_X, model)
 
     X = X + 0.5 * dt_local * mom_X

@@ -26,9 +26,11 @@ def comm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
     return A @ B - B @ A
 
 
-def random_hermitian(n: int) -> torch.Tensor:
+def random_hermitian(n: int, *, traceless: bool = True) -> torch.Tensor:
     """
-    Draw a random traceless Hermitian n x n matrix.
+    Draw a random Hermitian n x n matrix.
+
+    Set ``traceless=False`` to retain the identity mode.
     """
     re = torch.randn(n, n, device=config.device, dtype=config.real_dtype)
     im = torch.randn(n, n, device=config.device, dtype=config.real_dtype)
@@ -44,7 +46,8 @@ def random_hermitian(n: int) -> torch.Tensor:
     idx = torch.arange(n, device=config.device)
     mat[idx, idx] = diag_re.to(config.dtype)
 
-    mat = mat - (torch.trace(mat) / n) * torch.eye(n, dtype=config.dtype, device=config.device)
+    if traceless:
+        mat = mat - (torch.trace(mat) / n) * torch.eye(n, dtype=config.dtype, device=config.device)
     return mat
 
 
@@ -201,17 +204,8 @@ def ad_matrix(X: torch.Tensor) -> torch.Tensor:
 
 
 def makeH(mat: torch.Tensor) -> torch.Tensor:
-    """Project a matrix (or batch of matrices) to its traceless Hermitian part."""
-    tmp = 0.5 * (mat + dagger(mat))
-
-    n = tmp.shape[-1]
-    trace = tmp.diagonal(dim1=-2, dim2=-1).sum(-1).real / n
-
-    eye = torch.eye(n, dtype=tmp.dtype, device=tmp.device)
-    tmp = tmp - trace[..., None, None] * eye
-
-    tmp = 0.5 * (tmp + dagger(tmp))
-    return tmp
+    """Project a matrix (or batch of matrices) to its Hermitian part."""
+    return 0.5 * (mat + dagger(mat))
 
 
 def spinJMatrices(j_val: float):

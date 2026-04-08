@@ -115,12 +115,20 @@ Important flags:
 - `--step-size`, `--nsteps`: leapfrog controls (`dt = step-size / nsteps`).
 - `--no-gpu`: force CPU even if CUDA is available.
 - `--complex64`: switch from complex128/float64 to complex64/float32.
+- `--compile`, `--no-compile`: control `torch.compile` explicitly (default is off unless `IKKT_COMPILE=1` is set).
+- `--threads`, `--interop-threads`: set PyTorch CPU intra-op and inter-op thread counts.
 - `--resume`: load checkpoint if present.
 - `--fresh`: ignore checkpoint and initialize a fresh configuration.
 - `--save`: write checkpoint every `--save-every` iterations.
 - `--saveAllMats`: dump raw matrix snapshots in chunked `.npy` files.
 - `--force`: overwrite existing observable files.
 - `--source`: optional source vector expression, e.g. `--source "np.linspace(-1,1,10)"`.
+
+Environment overrides:
+
+- `IKKT_COMPILE=1`: enable `torch.compile` by default.
+- `IKKT_NUM_THREADS=<n>`: default CPU intra-op threads.
+- `IKKT_NUM_INTEROP_THREADS=<n>`: default CPU inter-op threads.
 
 ## Outputs
 

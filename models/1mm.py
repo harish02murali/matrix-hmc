@@ -56,6 +56,12 @@ class OneMatrixPolynomialModel(MatrixModel):
                 trace_powers.append(trace_val)
             corrs = np.array(trace_powers, dtype=np.complex128)
         return eigs, corrs
+    
+    def load_fresh(self, args: Namespace) -> None:
+        """Load a fresh configuration (zero matrices)."""
+        X = torch.stack([-2 * torch.eye(self.ncol, dtype=config.dtype, device=config.device) for _ in range(self.nmat)])
+        # X = torch.zeros((self.nmat, self.ncol, self.ncol), dtype=config.dtype, device=config.device)
+        self.set_state(X)
 
     def build_paths(self, name_prefix: str, data_path: str) -> dict[str, str]:
         coupling_suffix = "_".join(f"t{idx + 1}-{float(c):g}" for idx, c in enumerate(self.couplings))

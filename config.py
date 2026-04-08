@@ -1,4 +1,4 @@
-"""Shared configuration: device selection, dtypes."""
+"""Shared configuration: device selection, dtypes, and host runtime knobs."""
 
 from __future__ import annotations
 
@@ -8,11 +8,27 @@ import torch
 # Ensure Apple GPUs fall back cleanly to CPU for unsupported ops.
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
-# Environment toggles mirror the original script.
-# ALLOW_TF32 = os.getenv("IKKT_ALLOW_TF32", "1") == "1"
-# ENABLE_TORCH_COMPILE = os.getenv("IKKT_COMPILE", "0") == "1"
-ALLOW_TF32 = True
-ENABLE_TORCH_COMPILE = False
+def _parse_bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_positive_int_env(name: str) -> int | None:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return None
+    parsed = int(value)
+    if parsed < 1:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return parsed
+
+
+ALLOW_TF32 = _parse_bool_env("IKKT_ALLOW_TF32", True)
+ENABLE_TORCH_COMPILE = _parse_bool_env("IKKT_COMPILE", False)
+CPU_NUM_THREADS = _parse_positive_int_env("IKKT_NUM_THREADS")
+CPU_NUM_INTEROP_THREADS = _parse_positive_int_env("IKKT_NUM_INTEROP_THREADS")
 
 def _real_dtype_for(complex_dtype: torch.dtype) -> torch.dtype:
     return torch.float32 if complex_dtype == torch.complex64 else torch.float64
@@ -30,6 +46,47 @@ def _enable_tf32() -> None:
     torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
     if hasattr(torch, "set_float32_matmul_precision"):
         torch.set_float32_matmul_precision("medium")
+
+
+def configure_torch_compile(enabled: bool | None = None) -> bool:
+    """Set the global torch.compile toggle used by model constructors."""
+    global ENABLE_TORCH_COMPILE
+    if enabled is None:
+        return ENABLE_TORCH_COMPILE
+    ENABLE_TORCH_COMPILE = bool(enabled)
+    return ENABLE_TORCH_COMPILE
+
+
+def configure_threads(
+    num_threads: int | None = None,
+    num_interop_threads: int | None = None,
+) -> tuple[int, int]:
+    """Apply explicit CPU threading policy for PyTorch."""
+    global CPU_NUM_THREADS, CPU_NUM_INTEROP_THREADS
+
+    resolved_threads = CPU_NUM_THREADS if num_threads is None else num_threads
+    resolved_interop = CPU_NUM_INTEROP_THREADS if num_interop_threads is None else num_interop_threads
+
+    if resolved_threads is not None:
+        if resolved_threads < 1:
+            raise ValueError("num_threads must be positive")
+        torch.set_num_threads(resolved_threads)
+    else:
+        resolved_threads = torch.get_num_threads()
+
+    if resolved_interop is not None:
+        if resolved_interop < 1:
+            raise ValueError("num_interop_threads must be positive")
+        try:
+            torch.set_num_interop_threads(resolved_interop)
+        except RuntimeError:
+            resolved_interop = torch.get_num_interop_threads()
+    else:
+        resolved_interop = torch.get_num_interop_threads()
+
+    CPU_NUM_THREADS = resolved_threads
+    CPU_NUM_INTEROP_THREADS = resolved_interop
+    return resolved_threads, resolved_interop
 
 
 def configure_device(noGPUFlag: bool | None) -> torch.device:
@@ -68,7 +125,11 @@ device = torch.device("cpu")
 
 __all__ = [
     "ALLOW_TF32",
+    "CPU_NUM_INTEROP_THREADS",
+    "CPU_NUM_THREADS",
     "ENABLE_TORCH_COMPILE",
+    "configure_threads",
+    "configure_torch_compile",
     "configure_device",
     "configure_dtype",
     "device",

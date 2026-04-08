@@ -14,9 +14,6 @@ from MatrixModelHMC_pytorch.models.utils import (
     _commutator_action_sum,
     _fermion_det_log_identity_plus_sum_adX,
 )
-
-
-ENABLE_TORCH_COMPILE = config.ENABLE_TORCH_COMPILE
 model_name = "adjoint_det"
 
 
@@ -47,7 +44,7 @@ class AdjointDetModel(MatrixModel):
         def base_fn(X: torch.Tensor, *, model=self) -> torch.Tensor:
             return _fermion_det_log_identity_plus_sum_adX(X)
 
-        if ENABLE_TORCH_COMPILE and hasattr(torch, "compile"):
+        if config.ENABLE_TORCH_COMPILE and hasattr(torch, "compile"):
             self._log_det_fn = torch.compile(base_fn, dynamic=False)
         else:
             self._log_det_fn = base_fn

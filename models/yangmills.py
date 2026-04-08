@@ -40,7 +40,7 @@ class YangMillsModel(MatrixModel):
         self.g = self.couplings[0]
 
     def load_fresh(self, args):
-        mats = [random_hermitian(self.ncol) for _ in range(self.nmat)]
+        mats = [0*random_hermitian(self.ncol) for _ in range(self.nmat)]
         X = torch.stack(mats, dim=0).to(dtype=config.dtype, device=config.device)
         self.set_state(X)
 
@@ -57,6 +57,8 @@ class YangMillsModel(MatrixModel):
     def measure_observables(self, X: torch.Tensor | None = None):
         X = self._resolve_X(X)
         eigs = [torch.linalg.eigvalsh(mat).cpu().numpy() for mat in X]
+        eigs = eigs + [torch.linalg.eigvals(X[0] + 1j * X[1]).cpu().numpy()]
+        eigs = eigs + [torch.linalg.eigvals(X[0] @ X[1] - X[1] @ X[0]).cpu().numpy()]
         trace_sq = (torch.einsum("bij,bji->", X, X).real * self.ncol).item()
         comm_raw = _commutator_action_sum(X).real.item()
         corrs = np.array([trace_sq, comm_raw], dtype=np.float64)

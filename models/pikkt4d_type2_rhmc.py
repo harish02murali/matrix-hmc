@@ -32,6 +32,22 @@ def _adjoint_grad_from_matrix(M: torch.Tensor, ncol: int) -> torch.Tensor:
     return (grad_left - grad_right).conj()
 
 
+def _adjoint_grad_from_outer_sum(
+    U: torch.Tensor,
+    V: torch.Tensor,
+    coeff: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Batched low-rank form of _adjoint_grad_from_matrix for column-major vec(U) vec(V)^dagger.
+
+    U, V have shape (S, N, N) and coeff has shape (S,).
+    """
+    coeff_c = coeff.to(dtype=U.dtype)
+    term1 = torch.einsum("s,sij,skj->ik", coeff_c, U, V.conj())
+    term2 = torch.einsum("s,sji,sjk->ik", coeff_c, V.conj(), U)
+    return term1 - term2
+
+
 def build_model(args):
     return PIKKTTypeIIRHMCModel(
         ncol=args.ncol,
@@ -39,7 +55,7 @@ def build_model(args):
         source=args.source,
         bosonic=getattr(args, "bosonic", False),
         lorentzian=getattr(args, "lorentzian", False),
-        rhmc_order=getattr(args, "rhmc_order", 12),
+        rhmc_order=getattr(args, "rhmc_order", 20),
         rhmc_lmin=getattr(args, "rhmc_lmin", None),
         rhmc_lmax=getattr(args, "rhmc_lmax", None),
         rhmc_cg_tol=getattr(args, "rhmc_cg_tol", 1e-8),
@@ -114,7 +130,7 @@ def _multi_shift_cg_solve(
         raise ValueError(f"multi-shift CG expects vector rhs, got shape {b.shape}")
     finite_check_every = max(int(finite_check_every), 0)
     # Convergence polling less frequently avoids host-device sync every iteration.
-    convergence_check_every = 8 if b.device.type == "cuda" else 1
+    convergence_check_every = 32 if b.device.type == "cuda" else 1
 
     shifts = shifts.to(device=b.device, dtype=config.real_dtype)
     nshifts = int(shifts.numel())
@@ -246,7 +262,7 @@ class PIKKTTypeIIRHMCModel(MatrixModel):
         source: np.ndarray | None = None,
         bosonic: bool = False,
         lorentzian: bool = False,
-        rhmc_order: int = 12,
+        rhmc_order: int = 20,
         rhmc_lmin: float | None = None,
         rhmc_lmax: float | None = None,
         rhmc_cg_tol: float = 1e-8,
@@ -272,8 +288,8 @@ class PIKKTTypeIIRHMCModel(MatrixModel):
         self.rhmc_lmax = float(rhmc_lmax) if rhmc_lmax is not None else None
         self.rhmc_cg_tol = float(rhmc_cg_tol)
         self.rhmc_cg_maxiter = int(rhmc_cg_maxiter)
-        self._rhmc_cg_finite_check_every = 16 if config.device.type == "cuda" else 1
-        self._rhmc_window_pad = 3.0
+        self._rhmc_cg_finite_check_every = 32 if config.device.type == "cuda" else 1
+        self._rhmc_window_pad = 5.0
         self._rhmc_probe_min_eval_raw: float | None = None
         self._rhmc_probe_max_eval_raw: float | None = None
         self._rhmc_probe_cond_raw: float | None = None
@@ -282,6 +298,13 @@ class PIKKTTypeIIRHMCModel(MatrixModel):
         self._eye23 = (2.0 / 3.0) * get_eye_cached(
             2 * dim_tr, device=config.device, dtype=config.dtype
         )
+        if config.ENABLE_TORCH_COMPILE and hasattr(torch, "compile"):
+            self._force_impl = torch.compile(self._force_impl, dynamic=False)
+            # Compile the hot CG matvec kernels individually: they are called
+            # ~400 times per force step and contain Python control flow that
+            # prevents them from being traced inside _force_impl's graph.
+            self._apply_K_vec = torch.compile(self._apply_K_vec, dynamic=False)
+            self._apply_K_dag_vec = torch.compile(self._apply_K_dag_vec, dynamic=False)
 
         coeffs = torch.full(
             (self.nmat,), self.omega / 3.0, dtype=config.real_dtype, device=config.device
@@ -453,13 +476,41 @@ class PIKKTTypeIIRHMCModel(MatrixModel):
         self._rhmc_fit_err_hb = float(hb_err)
 
     def _auto_probe_window_from_X(self, X_eff: torch.Tensor) -> None:
-        K = self.fermionMat(X_eff)
-        H = K.conj().transpose(-1, -2) @ K
-        eigs = self._safe_eigvalsh_numpy(H, label="probe K^dagK")
-        lmin = float(np.min(eigs))
-        lmax = float(np.max(eigs))
-        lmin = max(lmin, 1e-12)
-        lmax = max(lmax, lmin * 10.0)
+        """Estimate spectral bounds of K†K via matrix-free power/inverse iteration.
+
+        Avoids materialising the full (2N²×2N²) K matrix so this is O(N³) in
+        memory and O(n_iter × N³) in time — safe at N=100 on H200.
+        """
+        matvec = self._build_kdagk_matvec(X_eff)
+        nvec = 2 * self.ncol * self.ncol
+
+        with torch.no_grad():
+            # --- λ_max via power iteration ---
+            v = torch.randn(nvec, dtype=X_eff.dtype, device=X_eff.device)
+            v = v / v.norm()
+            for _ in range(80):
+                v = matvec(v)
+                nrm = v.norm()
+                if nrm < 1e-30:
+                    break
+                v = v / nrm
+            lmax = float(torch.real(torch.vdot(v, matvec(v))).item())
+            lmax = max(lmax, 1e-12)
+
+            # --- λ_min via shift-and-invert: largest eval of (lmax·I − K†K) is (lmax − λ_min) ---
+            w = torch.randn(nvec, dtype=X_eff.dtype, device=X_eff.device)
+            w = w / w.norm()
+            for _ in range(80):
+                w = lmax * w - matvec(w)
+                nrm = w.norm()
+                if nrm < 1e-30:
+                    break
+                w = w / nrm
+            # Rayleigh quotient of K†K at the converged vector gives λ_min
+            lmin = float(torch.real(torch.vdot(w, matvec(w))).item())
+            lmin = max(lmin, 1e-12)
+            if lmin >= lmax:
+                lmin = lmax * 1e-6
 
         self._rhmc_probe_min_eval_raw = lmin
         self._rhmc_probe_max_eval_raw = lmax
@@ -689,54 +740,53 @@ class PIKKTTypeIIRHMCModel(MatrixModel):
         )
         Kchis = self._apply_K_vec(X_eff, chis)
         coeff = (-2.0 * inv_alphas).to(dtype=X_eff.dtype)
-        B_total = torch.einsum("s,si,sj->ij", coeff, Kchis, chis.conj())
 
         if self.lorentzian:
             # Keep the robust autograd pullback for the Lorentzian branch.
+            B_total = torch.einsum("s,si,sj->ij", coeff, Kchis, chis.conj())
             X_var = X_eff.detach().clone().requires_grad_(True)
             K_var = self.fermionMat(X_var)
             lin = torch.real(torch.sum(torch.conj(B_total.detach()) * K_var))
             grad = torch.autograd.grad(lin, X_var, create_graph=False, retain_graph=False)[0]
             return grad
 
-        dim = self.ncol * self.ncol
-        B11 = B_total[:dim, :dim]
-        B12 = B_total[:dim, dim:]
-        B21 = B_total[dim:, :dim]
-        B22 = B_total[dim:, dim:]
+        n2 = self.ncol * self.ncol
+        chi_u = self._vec_to_mat_col(chis[:, :n2]).contiguous()
+        chi_l = self._vec_to_mat_col(chis[:, n2:]).contiguous()
+        kchi_u = self._vec_to_mat_col(Kchis[:, :n2]).contiguous()
+        kchi_l = self._vec_to_mat_col(Kchis[:, n2:]).contiguous()
+
+        g11 = _adjoint_grad_from_outer_sum(kchi_u, chi_u, coeff)
+        g12 = _adjoint_grad_from_outer_sum(kchi_u, chi_l, coeff)
+        g21 = _adjoint_grad_from_outer_sum(kchi_l, chi_u, coeff)
+        g22 = _adjoint_grad_from_outer_sum(kchi_l, chi_l, coeff)
 
         # For K blocks written in terms of raw ad_X operators:
         #   UR = i ad2 - ad1, LL = -i ad2 - ad1, UL = -i ad4 - ad3, LR = -i ad4 + ad3
-        # and grad of Re(sum conj(C) * ad_X) is _adjoint_grad_from_matrix(C.conj()).
-        C1 = -(B12 + B21)
-        C2 = 1j * (B21 - B12)
-        C3 = (B22 - B11)
-        C4 = 1j * (B11 + B22)
-
-        g1 = _adjoint_grad_from_matrix(C1.conj(), self.ncol)
-        g2 = _adjoint_grad_from_matrix(C2.conj(), self.ncol)
-        g3 = _adjoint_grad_from_matrix(C3.conj(), self.ncol)
-        g4 = _adjoint_grad_from_matrix(C4.conj(), self.ncol)
+        g1 = -(g12 + g21)
+        g2 = 1j * (g21 - g12)
+        g3 = g22 - g11
+        g4 = 1j * (g11 + g22)
         return torch.stack([g1, g2, g3, g4], dim=0)
 
     def _force_impl(self, X: torch.Tensor) -> torch.Tensor:
         X = self._resolve_X(X)
         X_eff = self._effective_X(X)
-        grad = torch.zeros_like(X_eff)
 
-        for i in range(self.nmat):
-            acc = torch.zeros_like(X_eff[i])
-            for j in range(self.nmat):
-                if i == j:
-                    continue
-                comm = X_eff[i] @ X_eff[j] - X_eff[j] @ X_eff[i]
-                acc = acc + (X_eff[j] @ comm - comm @ X_eff[j])
-            grad[i] = -acc
+        # Vectorised double commutator: grad[i] = -sum_{j≠i} [X_j, [X_i, X_j]]
+        # All pairwise products X_i @ X_j, shape (D, D, N, N)
+        XiXj = torch.matmul(X_eff.unsqueeze(1), X_eff.unsqueeze(0))
+        # [X_i, X_j] for all i, j; comm_all[i,i] = 0 so diagonal terms are free
+        comm_all = XiXj - XiXj.transpose(0, 1)
+        # sum_j X_j @ [X_i, X_j]  and  sum_j [X_i, X_j] @ X_j
+        left  = torch.einsum("jkl,ijlm->ikm", X_eff, comm_all)
+        right = torch.einsum("ijkl,jlm->ikm", comm_all, X_eff)
+        grad = -(left - right)
 
         coeff = 2j * (1 + self.omega)
-        grad[0] += coeff * (X_eff[1] @ X_eff[2] - X_eff[2] @ X_eff[1])
-        grad[1] += coeff * (X_eff[2] @ X_eff[0] - X_eff[0] @ X_eff[2])
-        grad[2] += coeff * (X_eff[0] @ X_eff[1] - X_eff[1] @ X_eff[0])
+        grad[0] = grad[0] + coeff * (X_eff[1] @ X_eff[2] - X_eff[2] @ X_eff[1])
+        grad[1] = grad[1] + coeff * (X_eff[2] @ X_eff[0] - X_eff[0] @ X_eff[2])
+        grad[2] = grad[2] + coeff * (X_eff[0] @ X_eff[1] - X_eff[1] @ X_eff[0])
 
         grad = grad + 2 * self._mass_coeffs.to(device=X.device)[:, None, None] * X_eff
         grad = grad * (self.ncol / self.g)

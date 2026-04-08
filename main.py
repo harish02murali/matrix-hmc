@@ -168,6 +168,13 @@ def write_run_metadata(path: str, model: MatrixModel, args: argparse.Namespace) 
             "seed": args.seed,
             "timestamp": datetime.datetime.now().isoformat(),
         },
+        "runtime": {
+            "device": str(config.device),
+            "dtype": str(config.dtype),
+            "torch_compile": config.ENABLE_TORCH_COMPILE,
+            "num_threads": config.CPU_NUM_THREADS,
+            "num_interop_threads": config.CPU_NUM_INTEROP_THREADS,
+        },
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
@@ -213,6 +220,8 @@ def run_simulation(args: argparse.Namespace) -> MatrixModel:
     print(f"  Save                     = {args.save}")
     print(f"  outputs                  = {paths['dir']}")
     print(f"  device/dtype             = {config.device}/{config.dtype}")
+    print(f"  torch.compile            = {config.ENABLE_TORCH_COMPILE}")
+    print(f"  cpu threads              = {config.CPU_NUM_THREADS}/{config.CPU_NUM_INTEROP_THREADS} (intra/inter-op)")
     source = getattr(model, "source", None)
     if source is not None:
         print(f"  Source                   = {args.source}")
@@ -311,6 +320,8 @@ if __name__ == "__main__":
     start_time = time.time()
     print("STARTED:", datetime.datetime.now().strftime("%d %B %Y %H:%M:%S"))
 
+    config.configure_torch_compile(args.compile)
+    config.configure_threads(args.threads, args.interop_threads)
     config.configure_device(args.noGPU)
     config.configure_dtype(args.complex64)
     model = run_simulation(args)

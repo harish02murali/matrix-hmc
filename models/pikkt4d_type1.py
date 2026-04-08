@@ -15,9 +15,6 @@ from MatrixModelHMC_pytorch.algebra import (
 )
 from MatrixModelHMC_pytorch.models.base import MatrixModel
 from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum
-
-
-ENABLE_TORCH_COMPILE = config.ENABLE_TORCH_COMPILE
 model_name = "pikkt4d_type1"
 
 
@@ -94,7 +91,7 @@ class PIKKTTypeIModel(MatrixModel):
         def base_fn(X: torch.Tensor, *, model=self) -> torch.Tensor:
             return _type1_logdet_impl(X, model._type1_A)
 
-        if ENABLE_TORCH_COMPILE and hasattr(torch, "compile"):
+        if config.ENABLE_TORCH_COMPILE and hasattr(torch, "compile"):
             self._log_det_fn = torch.compile(base_fn, dynamic=False)
         else:
             self._log_det_fn = base_fn
