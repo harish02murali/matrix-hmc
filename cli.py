@@ -1,6 +1,7 @@
 """Command Line Interface parsing helpers for the D=4 pIKKT HMC driver."""
 
 import argparse
+import math
 import os
 from typing import Sequence
 
@@ -70,6 +71,15 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--force", action="store_true", help="Overwrite existing output files and checkpoint")
     parser.add_argument("--dry-run", action="store_true", help="Print resolved configuration and exit")
     parser.add_argument("--source", type=_parse_source, default=None, help="Numpy expression for source, e.g., np.linspace(-1,1,20)")
+    type1_group = parser.add_argument_group(
+        "Type I options", "Relevant for --model pikkt4d_type1"
+    )
+    type1_group.add_argument(
+        "--eta",
+        type=float,
+        default=1.0,
+        help="Type I fermion deformation parameter eta (eta=1 is undeformed SUSY)",
+    )
     type2_group = parser.add_argument_group(
         "Type II / 10D options", "Relevant for --model pikkt4d_type2 and --model pikkt10d"
     )
@@ -120,8 +130,11 @@ def validate_args(args: argparse.Namespace) -> None:
     if model_lower == "1mm":
         if len(args.coupling) < 1:
             raise ValueError("1mm model requires at least one coupling via --coupling t1 [t2 ...]")
-    if model_lower == "pikkt4d_type1" and len(args.coupling) != 1:
-        raise ValueError("pIKKT Type I requires exactly one coupling g via --coupling g")
+    if model_lower == "pikkt4d_type1":
+        if len(args.coupling) != 1:
+            raise ValueError("pIKKT Type I requires exactly one coupling g via --coupling g")
+        if not math.isfinite(args.eta) or args.eta == 0.0:
+            raise ValueError("--eta must be finite and non-zero for pIKKT Type I")
     if model_lower == "pikkt4d_type2" and len(args.coupling) != 2:
         raise ValueError("pIKKT Type II requires exactly two couplings via --coupling g omega")
     if model_lower == "pikkt4d_type2_rhmc":

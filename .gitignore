@@ -1,6 +1,5 @@
 *.pyc
 *.sh
-dataAnalysis*.ipynb
 *.ipynb
 *.npy
 __pycache__/

@@ -112,6 +112,27 @@ def _complex_normal(size: int, device: torch.device, dtype: torch.dtype) -> torc
     return ((re + 1j * im) / np.sqrt(2.0)).to(dtype=dtype)
 
 
+def _direct_multi_shift_solve(
+    mat: torch.Tensor,
+    b: torch.Tensor,
+    shifts: torch.Tensor,
+) -> torch.Tensor:
+    """Solve (mat + shift_s I) x_s = b for all shifts via batched linalg.solve.
+
+    Replaces the iterative CG loop for small systems where GPU kernel-launch
+    overhead dominates.  ``mat`` must be square and (nvec x nvec).
+    """
+    nshifts = int(shifts.numel())
+    nvec = int(b.numel())
+    if nshifts == 0:
+        return torch.zeros((0, nvec), dtype=b.dtype, device=b.device)
+    eye = torch.eye(nvec, dtype=mat.dtype, device=mat.device)
+    # Build (nshifts, nvec, nvec) shifted systems
+    M = mat.unsqueeze(0) + shifts.to(dtype=mat.real.dtype).view(-1, 1, 1).to(dtype=mat.dtype) * eye
+    rhs = b.unsqueeze(0).expand(nshifts, -1)  # (nshifts, nvec)
+    return torch.linalg.solve(M, rhs)          # (nshifts, nvec)
+
+
 def _multi_shift_cg_solve(
     matvec,
     b: torch.Tensor,
@@ -289,6 +310,10 @@ class PIKKTTypeIIRHMCModel(MatrixModel):
         self.rhmc_cg_tol = float(rhmc_cg_tol)
         self.rhmc_cg_maxiter = int(rhmc_cg_maxiter)
         self._rhmc_cg_finite_check_every = 32 if config.device.type == "cuda" else 1
+        # Use direct dense solve (linalg.solve) instead of iterative CG when
+        # nvec = 2*N^2 is small enough that GPU kernel-launch overhead dominates.
+        # At N=10 (nvec=200) or N=16 (nvec=512) this is orders of magnitude faster.
+        self._rhmc_direct_solve_threshold = 512
         self._rhmc_window_pad = 5.0
         self._rhmc_probe_min_eval_raw: float | None = None
         self._rhmc_probe_max_eval_raw: float | None = None
@@ -652,6 +677,22 @@ class PIKKTTypeIIRHMCModel(MatrixModel):
     def _build_kdagk_matvec(self, X_eff: torch.Tensor):
         return lambda v: self._apply_K_dag_vec(X_eff, self._apply_K_vec(X_eff, v))
 
+    def _build_kdagk_matrix(self, X_eff: torch.Tensor) -> torch.Tensor:
+        """Materialize K†K as a dense (nvec x nvec) matrix.
+
+        Uses a single batched _apply_K_vec call (passing the identity) rather
+        than nvec separate matvec applications.  Only practical for small N
+        (nvec = 2*N^2 ≤ ~512).
+        """
+        nvec = 2 * self.ncol * self.ncol
+        I = torch.eye(nvec, dtype=X_eff.dtype, device=X_eff.device)
+        # _apply_K_vec(I): row i → K applied to e_i → i-th column of K
+        # so the result is K.T, i.e. K = result.mT
+        K_out = self._apply_K_vec(X_eff, I)       # (nvec, nvec), = K.T
+        # K† = K_out.conj()  (derived: K†[i,j] = conj(K_out[i,j]))
+        # K†K = K† @ K = K_out.conj() @ K_out.mT
+        return K_out.conj() @ K_out.mT
+
     def begin_trajectory(
         self,
         X: torch.Tensor | None = None,
@@ -666,23 +707,33 @@ class PIKKTTypeIIRHMCModel(MatrixModel):
         X = self._resolve_X(X)
         X_eff = X if already_effective else self._effective_X(X)
         self._ensure_rhmc_ready(X_eff)
-        matvec = self._build_kdagk_matvec(X_eff)
         nvec = 2 * self.ncol * self.ncol
 
         with torch.no_grad():
             if self._hb_c0 is None or self._hb_alphas is None or self._hb_betas is None:
                 raise RuntimeError("RHMC heatbath coefficients are not initialized")
             eta = _complex_normal(nvec, device=X_eff.device, dtype=X_eff.dtype)
-            phi = _apply_rational_to_vec(
-                matvec,
-                eta,
-                c0=self._hb_c0.to(device=X_eff.device),
-                alphas=self._hb_alphas.to(device=X_eff.device),
-                betas=self._hb_betas.to(device=X_eff.device),
-                tol=self.rhmc_cg_tol,
-                maxiter=self.rhmc_cg_maxiter,
-                finite_check_every=self._rhmc_cg_finite_check_every,
-            )
+            if nvec <= self._rhmc_direct_solve_threshold:
+                KdagK = self._build_kdagk_matrix(X_eff)
+                hb_c0 = self._hb_c0.to(device=X_eff.device)
+                hb_alphas = self._hb_alphas.to(device=X_eff.device)
+                hb_betas = self._hb_betas.to(device=X_eff.device)
+                x_shift = _direct_multi_shift_solve(KdagK, eta, hb_betas)
+                phi = hb_c0.to(dtype=eta.dtype) * eta + torch.einsum(
+                    "s,sn->n", hb_alphas.to(dtype=eta.dtype), x_shift
+                )
+            else:
+                matvec = self._build_kdagk_matvec(X_eff)
+                phi = _apply_rational_to_vec(
+                    matvec,
+                    eta,
+                    c0=self._hb_c0.to(device=X_eff.device),
+                    alphas=self._hb_alphas.to(device=X_eff.device),
+                    betas=self._hb_betas.to(device=X_eff.device),
+                    tol=self.rhmc_cg_tol,
+                    maxiter=self.rhmc_cg_maxiter,
+                    finite_check_every=self._rhmc_cg_finite_check_every,
+                )
             self._phi = phi.detach()
 
     def end_trajectory(self, accepted: bool) -> None:
@@ -725,19 +776,25 @@ class PIKKTTypeIIRHMCModel(MatrixModel):
     def _fermion_force(self, X_eff: torch.Tensor) -> torch.Tensor:
         phi = self._require_phi(X_eff)
 
-        matvec = self._build_kdagk_matvec(X_eff)
         if self._inv_alphas is None or self._inv_betas is None:
             raise RuntimeError("RHMC force coefficients are not initialized")
         inv_alphas = self._inv_alphas.to(device=X_eff.device)
         inv_betas = self._inv_betas.to(device=X_eff.device)
-        chis = _multi_shift_cg_solve(
-            matvec,
-            phi,
-            inv_betas,
-            tol=self.rhmc_cg_tol,
-            maxiter=self.rhmc_cg_maxiter,
-            finite_check_every=self._rhmc_cg_finite_check_every,
-        )
+
+        nvec = 2 * self.ncol * self.ncol
+        if nvec <= self._rhmc_direct_solve_threshold:
+            KdagK = self._build_kdagk_matrix(X_eff)
+            chis = _direct_multi_shift_solve(KdagK, phi, inv_betas)
+        else:
+            matvec = self._build_kdagk_matvec(X_eff)
+            chis = _multi_shift_cg_solve(
+                matvec,
+                phi,
+                inv_betas,
+                tol=self.rhmc_cg_tol,
+                maxiter=self.rhmc_cg_maxiter,
+                finite_check_every=self._rhmc_cg_finite_check_every,
+            )
         Kchis = self._apply_K_vec(X_eff, chis)
         coeff = (-2.0 * inv_alphas).to(dtype=X_eff.dtype)
 

@@ -61,6 +61,8 @@ def configure_torch_compile(enabled: bool | None = None) -> bool:
     if enabled is None:
         return ENABLE_TORCH_COMPILE
     ENABLE_TORCH_COMPILE = bool(enabled)
+    if ENABLE_TORCH_COMPILE:
+        torch._dynamo.config.capture_scalar_outputs = True
     return ENABLE_TORCH_COMPILE
 
 

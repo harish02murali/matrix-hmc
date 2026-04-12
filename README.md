@@ -18,10 +18,10 @@ pip install -e .
 ## Available Models
 **Four dimensional Models**
 
-Type I, $SO(4)$ invariant, single coupling constant $g$:
+Type I, $SO(4)$ invariant, with coupling constant $g$ and optional fermion deformation parameter $\eta$:
 
 $$
-S_{D=4,\text{type I}}=\frac{1}{g}\text{Tr}\Bigl[-\frac14 [X_I,X_J]^2 -\frac{i}{2}\bar\psi \Gamma^I [X_I,\psi] + X_I^2 + \bar\psi\psi \Bigr]
+S_{D=4,\text{type I}}=\frac{1}{g}\text{Tr}\Bigl[-\frac14 [X_I,X_J]^2 -\frac{i}{2}\bar\psi \Gamma^I [X_I,\psi] + X_I^2 + \eta\,\bar\psi\psi \Bigr]
 $$
 
 Type II, $SO(3)$ invariant, two coupling constants $g$ and $\omega$:
@@ -40,6 +40,7 @@ Model selection is dynamic: `--model <name>` loads `models/<name>.py`.
 - `pikkt4d_type1`
   - Fixed `D=4`
   - Couplings: `--coupling g`
+  - Extra flag: `--eta` (default `1.0`)
 - `pikkt4d_type2`
   - Fixed `D=4`
   - Couplings: `--coupling g omega`
@@ -65,7 +66,7 @@ Model selection is dynamic: `--model <name>` loads `models/<name>.py`.
 Basic Type I run:
 
 ```bash
-python main.py --model pikkt4d_type1 --ncol 10 --niters 300 --coupling 100.0 --name runA --data-path outputs
+python main.py --model pikkt4d_type1 --ncol 10 --niters 300 --coupling 100.0 --eta 1.0 --name runA --data-path outputs
 ```
 
 Type II run:
@@ -123,6 +124,7 @@ Important flags:
 - `--saveAllMats`: dump raw matrix snapshots in chunked `.npy` files.
 - `--force`: overwrite existing observable files.
 - `--source`: optional source vector expression, e.g. `--source "np.linspace(-1,1,10)"`.
+- `--eta`: Type I fermion deformation parameter (`--model pikkt4d_type1` only, default `1.0`).
 
 Environment overrides:
 
