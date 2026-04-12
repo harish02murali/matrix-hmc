@@ -222,9 +222,6 @@ def run_simulation(args: argparse.Namespace) -> MatrixModel:
     print(f"  device/dtype             = {config.device}/{config.dtype}")
     print(f"  torch.compile            = {config.ENABLE_TORCH_COMPILE}")
     print(f"  cpu threads              = {config.CPU_NUM_THREADS}/{config.CPU_NUM_INTEROP_THREADS} (intra/inter-op)")
-    source = getattr(model, "source", None)
-    if source is not None:
-        print(f"  Source                   = {args.source}")
     print("------------------------------------------------\n")
 
     if args.dry_run:

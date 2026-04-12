@@ -13,6 +13,8 @@ from MatrixModelHMC_pytorch.models.utils import (
     _anticommutator_action_sum,
     _commutator_action_sum,
     _fermion_det_log_identity_plus_sum_adX,
+    parse_source,
+    source_potential,
 )
 model_name = "adjoint_det"
 
@@ -35,7 +37,7 @@ class AdjointDetModel(MatrixModel):
 
     def __init__(self, dim: int, ncol: int, couplings: list, source: np.ndarray | None = None) -> None:
         super().__init__(nmat=dim, ncol=ncol)
-        self.source = torch.diag(torch.tensor(source, device=config.device, dtype=config.dtype)) if source is not None else None
+        self.source = parse_source(source, config.device, config.dtype)
         self.couplings = couplings
         self.g = self.couplings[0]
         self.is_hermitian = True
@@ -64,7 +66,7 @@ class AdjointDetModel(MatrixModel):
 
         src = torch.tensor(0.0, dtype=X.dtype, device=X.device)
         if self.source is not None:
-            src = -(self.ncol / np.sqrt(self.g)) * torch.trace(self.source @ X[0])
+            src = source_potential(self.source, X, self.ncol, self.g)
 
         return (self.ncol / self.g) * bos + det + src.real
 

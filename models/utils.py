@@ -2,10 +2,57 @@
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 from MatrixModelHMC_pytorch import config
 from MatrixModelHMC_pytorch.algebra import kron_2d
+
+
+def parse_source(
+    source: "np.ndarray | None",
+    device: "torch.device",
+    dtype: "torch.dtype",
+) -> "torch.Tensor | None":
+    """Convert a numpy source array to a tensor.
+
+    Accepted shapes:
+      (N,)        — diagonal coupling to X[0]; stored as (N, N).
+      (nmat, N, N) — full coupling to all matrices; stored as-is.
+    """
+    if source is None:
+        return None
+    s = np.asarray(source)
+    if s.ndim == 1:
+        return torch.diag(torch.tensor(s, device=device, dtype=dtype))
+    if s.ndim == 3:
+        return torch.tensor(s, device=device, dtype=dtype)
+    raise ValueError(f"source must be shape (N,) or (nmat,N,N), got {s.shape}")
+
+
+def source_potential(source: torch.Tensor, X: torch.Tensor, ncol: int, g: float) -> torch.Tensor:
+    """Return the source contribution to the potential.
+
+    -N/sqrt(g) * tr(J X[0])          for a (N,N) diagonal source,
+    -N/sqrt(g) * sum_i tr(J_i X_i)   for a (nmat,N,N) source.
+    """
+    coeff = -(ncol / g ** 0.5)
+    if source.ndim == 2:
+        return coeff * torch.trace(source @ X[0])
+    return coeff * sum(torch.trace(source[i] @ X[i]) for i in range(source.shape[0]))
+
+
+def source_grad_inplace(source: torch.Tensor, grad: list, ncol: int, g: float) -> None:
+    """Add the source contribution to the analytic gradient in-place.
+
+    grad is a list of (N,N) tensors indexed by matrix.
+    """
+    coeff = -(ncol / g ** 0.5)
+    if source.ndim == 2:
+        grad[0] = grad[0] + coeff * source
+    else:
+        for i in range(source.shape[0]):
+            grad[i] = grad[i] + coeff * source[i]
 
 
 def _commutator_action_sum(X: torch.Tensor) -> torch.Tensor:

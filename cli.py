@@ -20,6 +20,36 @@ def _parse_source(expr: str):
         raise argparse.ArgumentTypeError(f"Invalid --source expression {expr!r}: {exc}") from exc
 
 
+def _default_nmat_for_model(model_lower: str) -> int | None:
+    if model_lower in {"pikkt4d_type1", "pikkt4d_type2", "pikkt4d_type2_rhmc"}:
+        return 4
+    if model_lower == "pikkt10d":
+        return 10
+    return None
+
+
+def _validate_source_shape(source: np.ndarray, ncol: int, expected_nmat: int | None) -> None:
+    s = np.asarray(source)
+    if s.ndim == 1:
+        if s.shape != (ncol,):
+            raise ValueError(f"--source 1D expression must evaluate to shape ({ncol},), got {s.shape}")
+        return
+
+    if s.ndim != 3:
+        raise ValueError(
+            f"--source expression must evaluate to shape ({ncol},) or (nmat,{ncol},{ncol}), got {s.shape}"
+        )
+
+    if s.shape[1:] != (ncol, ncol):
+        raise ValueError(
+            f"--source 3D expression must evaluate to shape (nmat,{ncol},{ncol}), got {s.shape}"
+        )
+    if expected_nmat is not None and s.shape[0] != expected_nmat:
+        raise ValueError(
+            f"--source 3D expression must have first dimension nmat={expected_nmat}, got {s.shape[0]}"
+        )
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     """User-facing CLI with flags."""
     parser = argparse.ArgumentParser(
@@ -177,8 +207,9 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--threads must be positive")
     if args.interop_threads is not None and args.interop_threads < 1:
         raise ValueError("--interop-threads must be positive")
-    if args.source is not None and args.source.shape != (args.ncol,):
-        raise ValueError(f"--source expression must evaluate to shape ({args.ncol},), got {args.source.shape}") 
+    if args.source is not None:
+        expected_nmat = args.nmat if args.nmat is not None else _default_nmat_for_model(model_lower)
+        _validate_source_shape(args.source, args.ncol, expected_nmat)
 
 
 __all__ = ["parse_args", "DEFAULT_DATA_PATH", "DEFAULT_PROFILE"]
