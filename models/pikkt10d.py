@@ -10,7 +10,7 @@ import torch
 from MatrixModelHMC_pytorch import config
 from MatrixModelHMC_pytorch.algebra import random_hermitian, spinJMatrices
 from MatrixModelHMC_pytorch.models.base import MatrixModel
-from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source, source_potential
+from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source
 
 model_name = "pikkt10d"
 
@@ -33,7 +33,7 @@ class PIKKT10DModel(MatrixModel):
         self.couplings = couplings
         self.g = self.couplings[0]
         self.omega = 1.0
-        self.source = parse_source(source, config.device, config.dtype)
+        self.source = parse_source(source, self.nmat, config.device, config.dtype)
         self.is_hermitian = True
         self.is_traceless = True
 
@@ -82,7 +82,7 @@ class PIKKT10DModel(MatrixModel):
         X = self._resolve_X(X)
         src = torch.tensor(0.0, dtype=config.real_dtype, device=X.device)
         if self.source is not None:
-            src = source_potential(self.source, X, self.ncol, self.g).real
+            src = (-(self.ncol / self.g ** 0.5) * torch.einsum("iab,iba->", self.source, X)).real
         return self.bosonic_potential(X) + self.fermion_determinant(X) + src
 
     def measure_observables(self, X: torch.Tensor | None = None):

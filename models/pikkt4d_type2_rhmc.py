@@ -17,7 +17,7 @@ from MatrixModelHMC_pytorch.algebra import (
     spinJMatrices,
 )
 from MatrixModelHMC_pytorch.models.base import MatrixModel
-from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source, source_potential, source_grad_inplace
+from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source, source_grad_inplace
 
 model_name = "pikkt4d_type2_rhmc"
 
@@ -295,7 +295,7 @@ class PIKKTTypeIIRHMCModel(MatrixModel):
         self.omega = self.couplings[1]
         self.bosonic = bosonic
         self.lorentzian = lorentzian
-        self.source = parse_source(source, config.device, config.dtype)
+        self.source = parse_source(source, self.nmat, config.device, config.dtype)
         self.is_hermitian = True
         self.is_traceless = True
 
@@ -903,7 +903,7 @@ class PIKKTTypeIIRHMCModel(MatrixModel):
         X = self._resolve_X(X)
         src = torch.tensor(0.0, dtype=X.dtype, device=X.device)
         if self.source is not None:
-            src = source_potential(self.source, X, self.ncol, self.g)
+            src = -(self.ncol / self.g ** 0.5) * torch.einsum("iab,iba->", self.source, X)
         if self.bosonic:
             return self.bosonic_potential(X) + src.real
         return self.bosonic_potential(X) + self.ferm_potential(X) + src.real

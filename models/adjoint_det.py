@@ -14,7 +14,6 @@ from MatrixModelHMC_pytorch.models.utils import (
     _commutator_action_sum,
     _fermion_det_log_identity_plus_sum_adX,
     parse_source,
-    source_potential,
 )
 model_name = "adjoint_det"
 
@@ -37,7 +36,7 @@ class AdjointDetModel(MatrixModel):
 
     def __init__(self, dim: int, ncol: int, couplings: list, source: np.ndarray | None = None) -> None:
         super().__init__(nmat=dim, ncol=ncol)
-        self.source = parse_source(source, config.device, config.dtype)
+        self.source = parse_source(source, dim, config.device, config.dtype)
         self.couplings = couplings
         self.g = self.couplings[0]
         self.is_hermitian = True
@@ -53,6 +52,8 @@ class AdjointDetModel(MatrixModel):
 
     def load_fresh(self, args):
         X = torch.zeros((self.nmat, self.ncol, self.ncol), dtype=config.dtype, device=config.device)
+        if self.source is not None:
+            X = self.source / 2
         self.set_state(X)
 
     def potential(self, X: torch.Tensor | None = None) -> torch.Tensor:
@@ -66,7 +67,7 @@ class AdjointDetModel(MatrixModel):
 
         src = torch.tensor(0.0, dtype=X.dtype, device=X.device)
         if self.source is not None:
-            src = source_potential(self.source, X, self.ncol, self.g)
+            src = -(self.ncol / self.g ** 0.5) * torch.einsum("iab,iba->", self.source, X)
 
         return (self.ncol / self.g) * bos + det + src.real
 
@@ -106,8 +107,8 @@ class AdjointDetModel(MatrixModel):
 
     def status_string(self, X: torch.Tensor | None = None) -> str:
         X = self._resolve_X(X)
-        avg_tr = (torch.einsum("bij,bji->", X, X).real / (self.nmat * self.ncol)).item()
-        return f"trX_i^2 = {avg_tr:.5f}. "
+        # return f"tr X_1^2 = {torch.trace(X[0] @ X[0]).real.item() / self.ncol:.5f} , tr X_{self.nmat}^2 = {torch.trace(X[-1] @ X[-1]).real.item() / self.ncol:.5f}"
+        return 'tr X_i^2 = ' + ','.join([f"{torch.trace(X[i] @ X[i]).real.item() / self.ncol:.2f}" for i in range(self.nmat)])
 
     def run_metadata(self) -> dict[str, object]:
         meta = super().run_metadata()

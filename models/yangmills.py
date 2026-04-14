@@ -10,7 +10,7 @@ import torch
 from MatrixModelHMC_pytorch import config
 from MatrixModelHMC_pytorch.algebra import random_hermitian
 from MatrixModelHMC_pytorch.models.base import MatrixModel
-from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source, source_potential
+from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source
 
 model_name = "yangmills"
 
@@ -33,7 +33,7 @@ class YangMillsModel(MatrixModel):
 
     def __init__(self, dim: int, ncol: int, couplings: list, source: np.ndarray | None = None) -> None:
         super().__init__(nmat=dim, ncol=ncol)
-        self.source = parse_source(source, config.device, config.dtype)
+        self.source = parse_source(source, self.nmat, config.device, config.dtype)
         self.couplings = couplings
         self.is_hermitian = True
         self.is_traceless = True
@@ -51,7 +51,7 @@ class YangMillsModel(MatrixModel):
         comm_term = -0.5 * _commutator_action_sum(X).real
         src = torch.tensor(0.0, dtype=X.dtype, device=X.device)
         if self.source is not None:
-            src = source_potential(self.source, X, self.ncol, self.g)
+            src = -(self.ncol / self.g ** 0.5) * torch.einsum("iab,iba->", self.source, X)
         return (self.ncol / self.g) * (mass_term + comm_term) + src.real
 
     def measure_observables(self, X: torch.Tensor | None = None):

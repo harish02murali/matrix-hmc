@@ -11,48 +11,41 @@ from MatrixModelHMC_pytorch.algebra import kron_2d
 
 def parse_source(
     source: "np.ndarray | None",
+    nmat: int,
     device: "torch.device",
     dtype: "torch.dtype",
 ) -> "torch.Tensor | None":
-    """Convert a numpy source array to a tensor.
+    """Convert a numpy source array to an (nmat, N, N) tensor.
 
     Accepted shapes:
-      (N,)        — diagonal coupling to X[0]; stored as (N, N).
+      (N,)         — diagonal coupling to X[0]; stored as (nmat, N, N)
+                     with [0] = diag(source) and [1:] = 0.
       (nmat, N, N) — full coupling to all matrices; stored as-is.
     """
     if source is None:
         return None
     s = np.asarray(source)
     if s.ndim == 1:
-        return torch.diag(torch.tensor(s, device=device, dtype=dtype))
+        N = s.shape[0]
+        out = torch.zeros(nmat, N, N, device=device, dtype=dtype)
+        out[0] = torch.diag(torch.tensor(s, device=device, dtype=dtype))
+        return out
     if s.ndim == 3:
+        if s.shape[0] != nmat:
+            raise ValueError(f"source has {s.shape[0]} matrices but model has nmat={nmat}")
         return torch.tensor(s, device=device, dtype=dtype)
     raise ValueError(f"source must be shape (N,) or (nmat,N,N), got {s.shape}")
-
-
-def source_potential(source: torch.Tensor, X: torch.Tensor, ncol: int, g: float) -> torch.Tensor:
-    """Return the source contribution to the potential.
-
-    -N/sqrt(g) * tr(J X[0])          for a (N,N) diagonal source,
-    -N/sqrt(g) * sum_i tr(J_i X_i)   for a (nmat,N,N) source.
-    """
-    coeff = -(ncol / g ** 0.5)
-    if source.ndim == 2:
-        return coeff * torch.trace(source @ X[0])
-    return coeff * sum(torch.trace(source[i] @ X[i]) for i in range(source.shape[0]))
 
 
 def source_grad_inplace(source: torch.Tensor, grad: list, ncol: int, g: float) -> None:
     """Add the source contribution to the analytic gradient in-place.
 
     grad is a list of (N,N) tensors indexed by matrix.
+    source is always (nmat, N, N).
     """
     coeff = -(ncol / g ** 0.5)
-    if source.ndim == 2:
-        grad[0] = grad[0] + coeff * source
-    else:
-        for i in range(source.shape[0]):
-            grad[i] = grad[i] + coeff * source[i]
+    for i in range(source.shape[0]):
+        grad[i] = grad[i] + coeff * source[i]
 
 
 def _commutator_action_sum(X: torch.Tensor) -> torch.Tensor:
@@ -82,13 +75,19 @@ def _anticommutator_action_sum(X: torch.Tensor) -> torch.Tensor:
 
 
 def _fermion_det_log_identity_plus_sum_adX(X: torch.Tensor) -> torch.Tensor:
-    """Return log det(1 + \sum_i ad_{X_i}) using the eigenvalue formula."""
+    """Return log|det(1 + i*sum_i ad_{X_i})| = sum_{a<b} log(1 + (mu_a - mu_b)^2).
+
+    The i factor in the Yukawa term i*psibar*[sqrt(X^2), psi] means each eigenvalue
+    of the fermion operator is (1 + i*delta), so |1 + i*delta|^2 = 1 + delta^2.
+    Pairing (a,b) with (b,a) gives log(1 + delta^2) per pair -- always positive,
+    no singularities, gradient 2*delta/(1+delta^2) bounded by 1.
+    """
     sum_X2 = (X @ X).sum(dim=0)
     eigvals = torch.sqrt(torch.linalg.eigvalsh(sum_X2).real.to(dtype=config.real_dtype))
-    diffs = eigvals.unsqueeze(0) - eigvals.unsqueeze(1)
-    factors = diffs + 1.0
-    logabs = torch.log(factors.abs())
-    return logabs.sum()
+    N = eigvals.shape[0]
+    i_idx, j_idx = torch.triu_indices(N, N, offset=1, device=eigvals.device)
+    delta = eigvals[j_idx] - eigvals[i_idx]   # >= 0 since eigvalsh returns sorted ascending
+    return torch.log(1.0 + delta * delta).sum()
 
 
 def gammaMajorana() -> torch.Tensor:

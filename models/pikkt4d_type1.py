@@ -14,7 +14,7 @@ from MatrixModelHMC_pytorch.algebra import (
     get_eye_cached,
 )
 from MatrixModelHMC_pytorch.models.base import MatrixModel
-from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source, source_potential
+from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source
 model_name = "pikkt4d_type1"
 
 
@@ -78,7 +78,7 @@ class PIKKTTypeIModel(MatrixModel):
         super().__init__(nmat=4, ncol=ncol)
         self.couplings = couplings
         self.g = self.couplings[0]
-        self.source = parse_source(source, config.device, config.dtype)
+        self.source = parse_source(source, self.nmat, config.device, config.dtype)
         self.no_myers = no_myers
         self.eta = float(eta)
         self.is_hermitian = True
@@ -114,7 +114,7 @@ class PIKKTTypeIModel(MatrixModel):
         det = -0.5 * self._log_det_fn(X)[1].real
         src = torch.tensor(0.0, dtype=X.dtype, device=X.device)
         if self.source is not None:
-            src = source_potential(self.source, X, self.ncol, self.g)
+            src = -(self.ncol / self.g ** 0.5) * torch.einsum("iab,iba->", self.source, X)
 
         return (bos.real * (self.ncol / self.g)) + det + src.real
 
