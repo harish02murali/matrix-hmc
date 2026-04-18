@@ -25,6 +25,8 @@ def _default_nmat_for_model(model_lower: str) -> int | None:
         return 4
     if model_lower == "pikkt10d":
         return 10
+    if model_lower == "susyym_3d":
+        return 3
     return None
 
 
@@ -62,7 +64,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         required=True,
         help=(
             "Matrix model name registered in the models package (e.g., 1mm, "
-            "pikkt4d_type1, pikkt4d_type2, pikkt4d_type2_rhmc, pikkt10d, yangmills)"
+            "pikkt4d_type1, pikkt4d_type2, pikkt4d_type2_rhmc, pikkt10d, yangmills, susyym_3d)"
         ),
     )
     parser.add_argument("--resume", action="store_true", help="Load a checkpoint if present")
@@ -96,6 +98,23 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         type=float,
         default=1.0,
         help="Coefficient of Tr(X_i^2) mass term (mass=1 is standard Yang-Mills)",
+    )
+    susy3d_group = parser.add_argument_group(
+        "SUSY YM 3D options", "Relevant for --model susyym_3d"
+    )
+    susy3d_group.add_argument(
+        "--fermion-mass",
+        type=float,
+        default=1.0,
+        dest="fermion_mass",
+        help="Adjoint fermion mass deformation in the 3D SUSY model",
+    )
+    susy3d_group.add_argument(
+        "--boson-mass",
+        type=float,
+        default=1.0,
+        dest="boson_mass",
+        help="Coefficient of Tr(X_i^2) boson mass term in the 3D SUSY model",
     )
     type1_group = parser.add_argument_group(
         "Type I options", "Relevant for --model pikkt4d_type1"
@@ -205,6 +224,15 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--nmat must be atleast 2 for Yang-Mills model")
         if not math.isfinite(args.mass):
             raise ValueError("--mass must be finite")
+    if model_lower == "susyym_3d":
+        if len(args.coupling) != 1:
+            raise ValueError("susyym_3d requires exactly one coupling g via --coupling g")
+        if args.nmat is not None and args.nmat != 3:
+            raise ValueError("susyym_3d has fixed dimension D=3; omit --nmat or set --nmat 3")
+        if not math.isfinite(args.fermion_mass):
+            raise ValueError("--fermion-mass must be finite")
+        if not math.isfinite(args.boson_mass):
+            raise ValueError("--boson-mass must be finite")
     if model_lower == "adjoint_det":
         if len(args.coupling) != 1:
             raise ValueError("adjoint_det model requires a single coupling g via --coupling g")

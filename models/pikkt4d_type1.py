@@ -47,39 +47,60 @@ def _type1_logdet_impl(X: torch.Tensor, A: torch.Tensor, eta: float = 1.0, massl
         (torch.cat((upper_left, lower_left), dim=1), torch.cat((upper_right, lower_right), dim=1)),
         dim=0,
     )
+    N = X.shape[-1]
+    dim = N * N
 
     if massless:
         B = torch.cat(
         (torch.cat((upper_left, upper_right), dim=1), torch.cat((lower_left, lower_right), dim=1)),
         dim=0,
-    )
-
-    AB = torch.cat(
-        (
-            torch.cat((twoi * lower_left, twoi * lower_right), dim=1),
-            torch.cat((-twoi * upper_left, -twoi * upper_right), dim=1),
-        ),
-        dim=0,
-    )
-
-    K = -eta_t * A - (0.25 / eta_t) * (C @ AB)
-
-    # Lift zero modes from the trace sector (identity direction)
-    # This adds a constant mass term to the trace mode, ensuring invertibility
-    # without affecting the physics (since it's a constant factor in det).
-    N = X.shape[-1]
-    dim = N * N
-    add_trace_projector_inplace(K[:dim, :dim], N)
-    add_trace_projector_inplace(K[dim:, dim:], N)
-
-    det = torch.slogdet(K)
-
-    if massless:
+        )
         add_trace_projector_inplace(C[:dim, :dim], N)
         add_trace_projector_inplace(C[dim:, dim:], N)
         add_trace_projector_inplace(B[:dim, :dim], N)
         add_trace_projector_inplace(B[dim:, dim:], N)
         det = torch.slogdet(C) + torch.slogdet(B)
+    else:
+        AB = torch.cat(
+            (
+                torch.cat((twoi * lower_left, twoi * lower_right), dim=1),
+                torch.cat((-twoi * upper_left, -twoi * upper_right), dim=1),
+            ),
+            dim=0,
+        )
+
+        K = -eta_t * A - (0.25 / eta_t) * (C @ AB)
+
+        # Lift zero modes from the trace sector (identity direction)
+        # This adds a constant mass term to the trace mode, ensuring invertibility
+        # without affecting the physics (since it's a constant factor in det).
+        add_trace_projector_inplace(K[:dim, :dim], N)
+        add_trace_projector_inplace(K[dim:, dim:], N)
+
+        det = torch.slogdet(K)
+
+    return det
+
+def _type1_massless_staudacher(X: torch.Tensor) -> torch.Tensor:
+    """Using Krauth-Staudacher formula for the massless case, as described in their 1998 paper (https://arxiv.org/abs/hep-th/9803117). Kept for benchmarking.
+    det((X4+iX3, iX2 +X1),(iX2-X1, X4 - iX3))
+    """
+
+    adX1, adX2, adX3, adX4 = 1j * ad_matrix(X[:4])
+
+    mat = torch.cat(
+        (
+            torch.cat((adX4 + 1j * adX3, 1j * adX2 + adX1), dim=1),
+            torch.cat((1j * adX2 - adX1, adX4 - 1j * adX3), dim=1),
+        ),
+        dim=0,
+    )
+
+    add_trace_projector_inplace(mat[:mat.shape[0] // 2, :mat.shape[1] // 2], X.shape[-1])
+    add_trace_projector_inplace(mat[mat.shape[0] // 2:, mat.shape[1] // 2:], X.shape[-1])
+
+    det = torch.slogdet(mat)
+
     return det
 
 
@@ -108,6 +129,8 @@ class PIKKTTypeIModel(MatrixModel):
         self._type1_A = A.clone()
 
         def base_fn(X: torch.Tensor, *, model=self) -> torch.Tensor:
+            if model.massless:
+                return 2 * _type1_massless_staudacher(X)
             return _type1_logdet_impl(X, model._type1_A, eta=model.eta, massless=model.massless)
 
         self._log_det_fn = base_fn
@@ -192,4 +215,6 @@ class PIKKTTypeIModel(MatrixModel):
                 "eta": self.eta,
             }
         )
+        if self.massless:
+            meta["massless"] = True
         return meta

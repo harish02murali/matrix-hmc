@@ -57,6 +57,10 @@ Model selection is dynamic: `--model <name>` loads `models/<name>.py`.
   - Variable dimension
   - Requires `--nmat D`
   - Couplings: `--coupling g`
+- `susyym_3d`
+  - Fixed `D=3`
+  - Couplings: `--coupling g`
+  - Extra flag: `--fermion-mass` (default `1.0`)
 - `1mm`
   - Single-matrix polynomial model
   - Couplings: `--coupling t1 [t2 ...]`
@@ -91,6 +95,12 @@ Adjoint determinant model:
 
 ```bash
 python main.py --model adjoint_det --nmat 6 --ncol 12 --niters 200 --coupling 50.0 --name adRun --data-path outputs
+```
+
+3D SUSY Yang-Mills-inspired model:
+
+```bash
+python main.py --model susyym_3d --ncol 12 --niters 300 --coupling 60.0 --fermion-mass 1.0 --name susy3d --data-path outputs
 ```
 
 Resume a run (same model/name/path configuration):
