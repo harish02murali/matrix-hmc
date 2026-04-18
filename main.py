@@ -171,7 +171,6 @@ def write_run_metadata(path: str, model: MatrixModel, args: argparse.Namespace) 
         "runtime": {
             "device": str(config.device),
             "dtype": str(config.dtype),
-            "torch_compile": config.ENABLE_TORCH_COMPILE,
             "num_threads": config.CPU_NUM_THREADS,
             "num_interop_threads": config.CPU_NUM_INTEROP_THREADS,
         },
@@ -220,7 +219,6 @@ def run_simulation(args: argparse.Namespace) -> MatrixModel:
     print(f"  Save                     = {args.save}")
     print(f"  outputs                  = {paths['dir']}")
     print(f"  device/dtype             = {config.device}/{config.dtype}")
-    print(f"  torch.compile            = {config.ENABLE_TORCH_COMPILE}")
     print(f"  cpu threads              = {config.CPU_NUM_THREADS}/{config.CPU_NUM_INTEROP_THREADS} (intra/inter-op)")
     print("------------------------------------------------\n")
 
@@ -235,7 +233,7 @@ def run_simulation(args: argparse.Namespace) -> MatrixModel:
 
     if not resumed:
         ensure_output_slots([paths["eigs"], paths["corrs"]], force=True)
-        # thermalize(model, hmc_params)
+        thermalize(model, hmc_params)
 
     acc_count = 0
     ev_X_buf: list[np.ndarray] = []
@@ -317,7 +315,6 @@ if __name__ == "__main__":
     start_time = time.time()
     print("STARTED:", datetime.datetime.now().strftime("%d %B %Y %H:%M:%S"))
 
-    config.configure_torch_compile(args.compile)
     config.configure_threads(args.threads, args.interop_threads)
     config.configure_device(args.noGPU)
     config.configure_dtype(args.complex64)

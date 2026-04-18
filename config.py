@@ -26,16 +26,9 @@ def _parse_positive_int_env(name: str) -> int | None:
 
 
 ALLOW_TF32 = _parse_bool_env("IKKT_ALLOW_TF32", True)
-ENABLE_TORCH_COMPILE = _parse_bool_env("IKKT_COMPILE", False)
 CPU_NUM_THREADS = _parse_positive_int_env("IKKT_NUM_THREADS")
 CPU_NUM_INTEROP_THREADS = _parse_positive_int_env("IKKT_NUM_INTEROP_THREADS")
 
-# TorchInductor does not support code generation for complex operators; it
-# silently falls back to eager while still paying the compile-graph overhead.
-# Use "aot_eager" for complex dtypes: it traces the graph (removing Python
-# dispatch overhead) without attempting inductor codegen.  Switch to
-# "inductor" only for real-valued models where codegen actually fires.
-TORCH_COMPILE_BACKEND: str = "aot_eager"
 
 def _real_dtype_for(complex_dtype: torch.dtype) -> torch.dtype:
     return torch.float32 if complex_dtype == torch.complex64 else torch.float64
@@ -53,17 +46,6 @@ def _enable_tf32() -> None:
     torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
     if hasattr(torch, "set_float32_matmul_precision"):
         torch.set_float32_matmul_precision("medium")
-
-
-def configure_torch_compile(enabled: bool | None = None) -> bool:
-    """Set the global torch.compile toggle used by model constructors."""
-    global ENABLE_TORCH_COMPILE
-    if enabled is None:
-        return ENABLE_TORCH_COMPILE
-    ENABLE_TORCH_COMPILE = bool(enabled)
-    if ENABLE_TORCH_COMPILE:
-        torch._dynamo.config.capture_scalar_outputs = True
-    return ENABLE_TORCH_COMPILE
 
 
 def configure_threads(
@@ -122,12 +104,9 @@ def configure_device(noGPUFlag: bool | None) -> torch.device:
 
 def configure_dtype(use_complex64: bool) -> torch.dtype:
     """Set the global complex dtype used for matrices."""
-    global dtype, real_dtype, TORCH_COMPILE_BACKEND
+    global dtype, real_dtype
     dtype = torch.complex64 if use_complex64 else torch.complex128
     real_dtype = _real_dtype_for(dtype)
-    # Keep the compile backend in sync: inductor silently falls back to eager
-    # for complex ops (with a UserWarning), so use aot_eager for complex dtypes.
-    TORCH_COMPILE_BACKEND = "aot_eager" if dtype.is_complex else "inductor"
     return dtype
 
 
@@ -139,10 +118,7 @@ __all__ = [
     "ALLOW_TF32",
     "CPU_NUM_INTEROP_THREADS",
     "CPU_NUM_THREADS",
-    "ENABLE_TORCH_COMPILE",
-    "TORCH_COMPILE_BACKEND",
     "configure_threads",
-    "configure_torch_compile",
     "configure_device",
     "configure_dtype",
     "device",

@@ -98,10 +98,10 @@ def update(acc_count: int, hmc_params: HMCParams, model: Any, reject_prob: float
 def thermalize(model: Any, hmc_params: HMCParams, steps: int = 10) -> None:
     """Run short, mostly-accepting trajectories to move the system toward equilibrium."""
     print("Thermalization steps, accept most jumps")
-    therm_params = replace(hmc_params, nsteps=int(hmc_params.nsteps/2), dt=hmc_params.dt / 10.0)
+    therm_params = replace(hmc_params, nsteps=int(hmc_params.nsteps * 2), dt=hmc_params.dt / 20.0)
     acc_count = 0
     for _ in range(steps):
-        acc_count = update(acc_count, therm_params, model, reject_prob=0.1)
+        acc_count = update(acc_count, therm_params, model)
     print("End of thermalization ", model.status_string())
 
 __all__ = [

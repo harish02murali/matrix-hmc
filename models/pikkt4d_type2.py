@@ -69,9 +69,6 @@ class PIKKTTypeIIModel(MatrixModel):
         self._eye23 = (2 / 3) * get_eye_cached(
             2 * dim_tr, device=config.device, dtype=config.dtype
         )
-        if config.ENABLE_TORCH_COMPILE and hasattr(torch, "compile"):
-            self._force_impl = torch.compile(self._force_impl, dynamic=False, backend=config.TORCH_COMPILE_BACKEND)
-
     def _effective_X(self, X: torch.Tensor) -> torch.Tensor:
         if not self.lorentzian:
             return X

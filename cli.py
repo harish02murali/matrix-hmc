@@ -75,19 +75,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--coupling", type=float, nargs="+", default=[100.0], help="Coupling g (can specify multiple, depending on model)")
     parser.add_argument("--no-gpu", action="store_true", dest="noGPU", default=False, help="Disable CUDA GPU even if available")
     parser.add_argument("--complex64", action="store_true", help="Use complex64/float32 precision instead of complex128/float64")
-    parser.add_argument(
-        "--compile",
-        dest="compile",
-        action="store_true",
-        default=None,
-        help="Enable torch.compile for supported model kernels",
-    )
-    parser.add_argument(
-        "--no-compile",
-        dest="compile",
-        action="store_false",
-        help="Disable torch.compile even if enabled via environment",
-    )
     parser.add_argument("--threads", type=int, default=None, help="Set torch intra-op CPU thread count")
     parser.add_argument("--interop-threads", type=int, default=None, help="Set torch inter-op CPU thread count")
     parser.add_argument("--name", type=str, default="run", help="Prefix for outputs")
@@ -101,6 +88,15 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--force", action="store_true", help="Overwrite existing output files and checkpoint")
     parser.add_argument("--dry-run", action="store_true", help="Print resolved configuration and exit")
     parser.add_argument("--source", type=_parse_source, default=None, help="Numpy expression for source, e.g., np.linspace(-1,1,20)")
+    ym_group = parser.add_argument_group(
+        "Yang-Mills options", "Relevant for --model yangmills"
+    )
+    ym_group.add_argument(
+        "--mass",
+        type=float,
+        default=1.0,
+        help="Coefficient of Tr(X_i^2) mass term (mass=1 is standard Yang-Mills)",
+    )
     type1_group = parser.add_argument_group(
         "Type I options", "Relevant for --model pikkt4d_type1"
     )
@@ -109,6 +105,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         type=float,
         default=1.0,
         help="Type I fermion deformation parameter eta (eta=1 is undeformed SUSY)",
+    )
+    type1_group.add_argument(
+        "--massless",
+        action="store_true",
+        help="Set Omega=0 in the Type I fermion matrix (massless limit)",
     )
     type2_group = parser.add_argument_group(
         "Type II / 10D options", "Relevant for --model pikkt4d_type2 and --model pikkt10d"
@@ -143,6 +144,16 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     rhmc_group.add_argument("--rhmc-cg-tol", type=float, default=1e-8, help="Shifted CG relative tolerance")
     rhmc_group.add_argument("--rhmc-cg-maxiter", type=int, default=400, help="Shifted CG maximum iterations")
+    adjdet2_group = parser.add_argument_group(
+        "adjoint_det2 options", "Relevant for --model adjoint_det2"
+    )
+    adjdet2_group.add_argument(
+        "--det-coeff",
+        type=float,
+        default=0.5,
+        dest="det_coeff",
+        help="Coefficient in the fermion determinant term: det = -det_coeff * (nmat-2) * log|det(...)|",
+    )
     args = parser.parse_args(argv)
     validate_args(args)
     return args
@@ -192,6 +203,8 @@ def validate_args(args: argparse.Namespace) -> None:
             raise ValueError("Yang-Mills model requires a single coupling g via --coupling g")
         if args.nmat < 2:
             raise ValueError("--nmat must be atleast 2 for Yang-Mills model")
+        if not math.isfinite(args.mass):
+            raise ValueError("--mass must be finite")
     if model_lower == "adjoint_det":
         if len(args.coupling) != 1:
             raise ValueError("adjoint_det model requires a single coupling g via --coupling g")

@@ -12,6 +12,7 @@ from MatrixModelHMC_pytorch.algebra import (
     add_trace_projector_inplace,
     ad_matrix,
     get_eye_cached,
+    random_hermitian,
 )
 from MatrixModelHMC_pytorch.models.base import MatrixModel
 from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source
@@ -23,12 +24,12 @@ def build_model(args):
         ncol=args.ncol,
         couplings=args.coupling,
         source=args.source,
-        no_myers=getattr(args, "no_myers", False),
         eta=getattr(args, "eta", 1.0),
+        massless=getattr(args, "massless", False),
     )
 
 
-def _type1_logdet_impl(X: torch.Tensor, A: torch.Tensor, eta: float = 1.0) -> torch.Tensor:
+def _type1_logdet_impl(X: torch.Tensor, A: torch.Tensor, eta: float = 1.0, massless: bool = False) -> torch.Tensor:
     """Original implementation — kept for benchmarking against _type1_logdet_impl."""
     # eta rescales the constant fermion block: A -> eta*A and A^{-1} -> (1/eta)*A^{-1}.
     eta_t = torch.tensor(eta, dtype=X.dtype, device=X.device)
@@ -44,6 +45,12 @@ def _type1_logdet_impl(X: torch.Tensor, A: torch.Tensor, eta: float = 1.0) -> to
 
     C = torch.cat(
         (torch.cat((upper_left, lower_left), dim=1), torch.cat((upper_right, lower_right), dim=1)),
+        dim=0,
+    )
+
+    if massless:
+        B = torch.cat(
+        (torch.cat((upper_left, upper_right), dim=1), torch.cat((lower_left, lower_right), dim=1)),
         dim=0,
     )
 
@@ -66,6 +73,13 @@ def _type1_logdet_impl(X: torch.Tensor, A: torch.Tensor, eta: float = 1.0) -> to
     add_trace_projector_inplace(K[dim:, dim:], N)
 
     det = torch.slogdet(K)
+
+    if massless:
+        add_trace_projector_inplace(C[:dim, :dim], N)
+        add_trace_projector_inplace(C[dim:, dim:], N)
+        add_trace_projector_inplace(B[:dim, :dim], N)
+        add_trace_projector_inplace(B[dim:, dim:], N)
+        det = torch.slogdet(C) + torch.slogdet(B)
     return det
 
 
@@ -74,13 +88,13 @@ class PIKKTTypeIModel(MatrixModel):
 
     model_name = model_name
 
-    def __init__(self, ncol: int, couplings: list, source: np.ndarray | None = None, no_myers: bool = False, eta: float = 1.0) -> None:
+    def __init__(self, ncol: int, couplings: list, source: np.ndarray | None = None, eta: float = 1.0, massless: bool = False) -> None:
         super().__init__(nmat=4, ncol=ncol)
         self.couplings = couplings
         self.g = self.couplings[0]
         self.source = parse_source(source, self.nmat, config.device, config.dtype)
-        self.no_myers = no_myers
         self.eta = float(eta)
+        self.massless = massless
         self.is_hermitian = True
         self.is_traceless = True
 
@@ -94,21 +108,18 @@ class PIKKTTypeIModel(MatrixModel):
         self._type1_A = A.clone()
 
         def base_fn(X: torch.Tensor, *, model=self) -> torch.Tensor:
-            return _type1_logdet_impl(X, model._type1_A, eta=model.eta)
+            return _type1_logdet_impl(X, model._type1_A, eta=model.eta, massless=model.massless)
 
-        if config.ENABLE_TORCH_COMPILE and hasattr(torch, "compile"):
-            self._log_det_fn = torch.compile(base_fn, dynamic=False, backend=config.TORCH_COMPILE_BACKEND)
-        else:
-            self._log_det_fn = base_fn
+        self._log_det_fn = base_fn
 
     def load_fresh(self, args):
-        X = torch.zeros((self.nmat, self.ncol, self.ncol), dtype=config.dtype, device=config.device)
+        X = torch.stack([0.01 * random_hermitian(self.ncol) for _ in range(self.nmat)])
         self.set_state(X)
 
     def potential(self, X: torch.Tensor | None = None) -> torch.Tensor:
         X = self._resolve_X(X)
         bos = -0.5 * _commutator_action_sum(X)
-        trace_sq = torch.einsum("bij,bji->", X, X)
+        trace_sq = 0.0 if self.massless else torch.einsum("bij,bji->", X, X)
         bos = bos + trace_sq
 
         det = -0.5 * self._log_det_fn(X)[1].real

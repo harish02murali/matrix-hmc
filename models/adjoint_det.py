@@ -15,8 +15,8 @@ from MatrixModelHMC_pytorch.models.utils import (
     _fermion_det_log_identity_plus_sum_adX,
     parse_source,
 )
+from MatrixModelHMC_pytorch.algebra import random_hermitian
 model_name = "adjoint_det"
-
 
 def build_model(args):
     if args.nmat is None:
@@ -26,44 +26,50 @@ def build_model(args):
         ncol=args.ncol,
         couplings=args.coupling,
         source=args.source,
+        det_coeff=args.det_coeff,
     )
 
 
 class AdjointDetModel(MatrixModel):
-    """Matrix model with product fermion determinant det(1 + \sum_i ad X_i)."""
+    """Matrix model with product fermion determinant det(1 + i sum_i ad_{\sqrt{X^2}})."""
 
     model_name = model_name
 
-    def __init__(self, dim: int, ncol: int, couplings: list, source: np.ndarray | None = None) -> None:
+    def __init__(self, dim: int, ncol: int, couplings: list, source: np.ndarray | None = None, det_coeff: float = 0.5) -> None:
         super().__init__(nmat=dim, ncol=ncol)
         self.source = parse_source(source, dim, config.device, config.dtype)
         self.couplings = couplings
         self.g = self.couplings[0]
+        self.det_coeff = det_coeff
         self.is_hermitian = True
         self.is_traceless = True
 
-        def base_fn(X: torch.Tensor, *, model=self) -> torch.Tensor:
-            return _fermion_det_log_identity_plus_sum_adX(X)
-
-        if config.ENABLE_TORCH_COMPILE and hasattr(torch, "compile"):
-            self._log_det_fn = torch.compile(base_fn, dynamic=False, backend=config.TORCH_COMPILE_BACKEND)
-        else:
-            self._log_det_fn = base_fn
-
     def load_fresh(self, args):
-        X = torch.zeros((self.nmat, self.ncol, self.ncol), dtype=config.dtype, device=config.device)
+        # X = torch.zeros((self.nmat, self.ncol, self.ncol), dtype=config.dtype, device=config.device)
+        X = 0.01 * torch.stack([random_hermitian(self.ncol, traceless=self.is_traceless) for i in range(self.nmat)])
         if self.source is not None:
             X = self.source / 2
         self.set_state(X)
 
+    def _fermion_det(self, X: torch.Tensor) -> torch.Tensor:
+        """Return log|det(1 + i sum_i ad_{\sqrt{X^2}})|.
+        """
+        sum_X2 = (X @ X).sum(dim=0)
+        eigvals = torch.sqrt(torch.linalg.eigvalsh(sum_X2).real.to(dtype=config.real_dtype))
+        N = eigvals.shape[0]
+        i_idx, j_idx = torch.triu_indices(N, N, offset=1, device=eigvals.device)
+        delta = eigvals[j_idx] - eigvals[i_idx]   # >= 0 since eigvalsh returns sorted ascending
+        return torch.log(1 + delta * delta).sum()
+
     def potential(self, X: torch.Tensor | None = None) -> torch.Tensor:
         X = self._resolve_X(X)
-        trace_sq = torch.einsum("bij,bji->", X, X).real
+        sum_X2 = (X @ X).sum(dim=0)
+        trace_sq = torch.einsum("ii->", sum_X2).real
+        # quartic = torch.einsum("ii->", sum_X2 @ sum_X2).real
         comm_term = -0.5 * _commutator_action_sum(X).real
         bos = trace_sq + comm_term
 
-        det_coeff = torch.tensor((self.nmat - 2), dtype=config.real_dtype, device=X.device)
-        det = -det_coeff * _fermion_det_log_identity_plus_sum_adX(X)
+        det = -self.det_coeff * (self.nmat - 2) * self._fermion_det(X)
 
         src = torch.tensor(0.0, dtype=X.dtype, device=X.device)
         if self.source is not None:
@@ -108,7 +114,7 @@ class AdjointDetModel(MatrixModel):
     def status_string(self, X: torch.Tensor | None = None) -> str:
         X = self._resolve_X(X)
         # return f"tr X_1^2 = {torch.trace(X[0] @ X[0]).real.item() / self.ncol:.5f} , tr X_{self.nmat}^2 = {torch.trace(X[-1] @ X[-1]).real.item() / self.ncol:.5f}"
-        return 'tr X_i^2 = ' + ','.join([f"{torch.trace(X[i] @ X[i]).real.item() / self.ncol:.2f}" for i in range(self.nmat)])
+        return 'tr X_i^2 = ' + ','.join([f"{torch.trace(X[i] @ X[i]).real.item() / self.ncol / np.sqrt(self.g):.2f}" for i in range(self.nmat)])
 
     def run_metadata(self) -> dict[str, object]:
         meta = super().run_metadata()
