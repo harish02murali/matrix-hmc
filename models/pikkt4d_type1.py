@@ -83,7 +83,8 @@ def _type1_logdet_impl(X: torch.Tensor, A: torch.Tensor, eta: float = 1.0, massl
 
 def _type1_massless_staudacher(X: torch.Tensor) -> torch.Tensor:
     """Using Krauth-Staudacher formula for the massless case, as described in their 1998 paper (https://arxiv.org/abs/hep-th/9803117). Kept for benchmarking.
-    det((X4+iX3, iX2 +X1),(iX2-X1, X4 - iX3))
+    det ((adX4+i adX3, i adX2 + adX1)
+         (i adX2-adX1, adX4 - i adX3))
     """
 
     adX1, adX2, adX3, adX4 = 1j * ad_matrix(X[:4])

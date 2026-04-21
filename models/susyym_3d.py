@@ -72,21 +72,28 @@ class SUSYYM3DModel(MatrixModel):
 		dim = self.ncol * self.ncol
 		eye = get_eye_cached(dim, device=X.device, dtype=X.dtype)
 
-		upper_left = 0.5 * (-1j * adX0 + adX2)
-		upper_right = self.fermion_mass * eye + 0.5j * adX1
-		lower_left = -self.fermion_mass * eye + 0.5j * adX1
-		lower_right = 0.5 * (1j * adX0 + adX2)
+		if self.fermion_mass == 0.0: # krauth-nicolai-staudacher basis for gamama matrices
+			upper_left = (adX2 + 1j * adX1)
+			upper_right = 1j * adX0
+			lower_left = 1j * adX0
+			lower_right = (adX2 - 1j * adX1)
+		else:
+			upper_left = 0.5 * (-1j * adX0 + adX2)
+			upper_right = self.fermion_mass * eye + 0.5j * adX1
+			lower_left = -self.fermion_mass * eye + 0.5j * adX1
+			lower_right = 0.5 * (1j * adX0 + adX2)
 
 		add_trace_projector_inplace(upper_left, self.ncol)
 		add_trace_projector_inplace(lower_right, self.ncol)
 
-		top = torch.cat((upper_left, upper_right), dim=1)
-		bottom = torch.cat((lower_left, lower_right), dim=1)
-		return torch.cat((top, bottom), dim=0)
+		return torch.cat((torch.cat((upper_left, upper_right), dim=1), 
+						torch.cat((lower_left, lower_right), dim=1)), dim=0)
 
 	def potential(self, X: torch.Tensor | None = None) -> torch.Tensor:
 		X = self._resolve_X(X)
-		bos = -0.5 * _commutator_action_sum(X) + self.boson_mass * torch.einsum("bij,bji->", X, X)
+		bos = -0.5 * _commutator_action_sum(X)
+		if self.boson_mass != 0.0:
+			bos += self.boson_mass * torch.einsum("bij,bji->", X, X)
 		fermion = -0.5 * torch.slogdet(self.fermion_matrix(X))[1].real
 
 		src = torch.tensor(0.0, dtype=X.dtype, device=X.device)

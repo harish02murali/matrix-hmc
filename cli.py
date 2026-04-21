@@ -128,7 +128,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     type1_group.add_argument(
         "--massless",
         action="store_true",
-        help="Set Omega=0 in the Type I fermion matrix (massless limit)",
+        help="Massless limit: for Type I sets Omega=0; for pikkt10d removes mass/Myers and uses bare IKKT Pfaffian",
     )
     type2_group = parser.add_argument_group(
         "Type II / 10D options", "Relevant for --model pikkt4d_type2 and --model pikkt10d"

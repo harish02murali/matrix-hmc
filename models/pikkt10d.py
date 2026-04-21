@@ -1,4 +1,4 @@
-"""10D polarized IKKT model with bosonic terms and placeholder fermions."""
+"""10D polarized IKKT model with fermionic Pfaffian."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 from MatrixModelHMC_pytorch import config
-from MatrixModelHMC_pytorch.algebra import random_hermitian, spinJMatrices
+from MatrixModelHMC_pytorch.algebra import ad_matrix, get_trace_diag_indices_cached, random_hermitian, spinJMatrices
 from MatrixModelHMC_pytorch.models.base import MatrixModel
 from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source
 
@@ -20,6 +20,7 @@ def build_model(args):
         ncol=args.ncol,
         couplings=args.coupling,
         source=args.source,
+        massless=getattr(args, "massless", False),
     )
 
 
@@ -28,11 +29,12 @@ class PIKKT10DModel(MatrixModel):
 
     model_name = model_name
 
-    def __init__(self, ncol: int, couplings: list, source: np.ndarray | None = None) -> None:
+    def __init__(self, ncol: int, couplings: list, source: np.ndarray | None = None, massless: bool = False) -> None:
         super().__init__(nmat=10, ncol=ncol)
         self.couplings = couplings
         self.g = self.couplings[0]
         self.omega = 1.0
+        self.massless = massless
         self.source = parse_source(source, self.nmat, config.device, config.dtype)
         self.is_hermitian = True
         self.is_traceless = True
@@ -40,6 +42,46 @@ class PIKKT10DModel(MatrixModel):
         coeffs = torch.full((self.nmat,), 1.0 / 64.0, dtype=config.real_dtype, device=config.device)
         coeffs[:3] = 3.0 / 64.0
         self._mass_coeffs = coeffs
+
+        # Precompute gamma_bar^I (10, 16, 16) and G^I = gamma_bar^{123} @ gamma_bar^I (10, 16, 16)
+        self._gb, self._G = self._build_gammas(config.device, config.dtype)
+
+    @staticmethod
+    def _build_gammas(device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build gamma_bar^I matrices and G^I = gamma_bar^{123} @ gamma_bar^I for I=1,...,10."""
+        s1 = torch.tensor([[0, 1], [1, 0]], dtype=dtype, device=device)
+        s2 = torch.tensor([[0, -1j], [1j, 0]], dtype=dtype, device=device)
+        s3 = torch.tensor([[1, 0], [0, -1]], dtype=dtype, device=device)
+        Id = torch.eye(2, dtype=dtype, device=device)
+
+        def k4(a, b, c, d):
+            return torch.kron(torch.kron(torch.kron(a, b), c), d)
+
+        # gamma_bar^I (16x16) for I=1,...,10 (0-indexed)
+        # For I=1,...,9: gamma_bar^I = gamma^I (lower-left block of Gamma^I)
+        # For I=10: gamma_bar^{10} = -gamma^{10} = i * Id_16
+        gb = torch.stack([
+            k4(s2, s2, s1, Id),                           # I=1
+            k4(s2, s3, Id, s2),                           # I=2
+            -k4(s3, Id, Id, Id),                          # I=3
+            -k4(s2, s1, Id, s2),                          # I=4
+            k4(s2, Id, s2, s3),                           # I=5
+            k4(s1, Id, Id, Id),                           # I=6
+            k4(s2, s2, s2, s2),                           # I=7
+            -k4(s2, Id, s2, s1),                          # I=8
+            k4(s2, s2, s3, Id),                           # I=9
+            1j * torch.eye(16, dtype=dtype, device=device),  # I=10
+        ], dim=0)  # (10, 16, 16)
+
+        # gamma_bar^{123} = (1/4) * {gamma_bar^1, [gamma_bar^2, gamma_bar^3]}
+        g1, g2, g3 = gb[0], gb[1], gb[2]
+        comm23 = g2 @ g3 - g3 @ g2
+        gb123 = 0.25 * (g1 @ comm23 + comm23 @ g1)
+
+        # G^I = gamma_bar^{123} @ gamma_bar^I
+        G = torch.einsum("ab,Ibc->Iac", gb123, gb)  # (10, 16, 16)
+
+        return gb, G
 
     def load_fresh(self, args):
         scale = float(np.sqrt(self.g / self.ncol))
@@ -61,20 +103,47 @@ class PIKKT10DModel(MatrixModel):
         self.set_state(X)
 
     def fermion_determinant(self, X: torch.Tensor | None = None) -> torch.Tensor:
-        """Placeholder for fermionic term; currently disabled."""
         X = self._resolve_X(X)
-        return torch.tensor(0.0, dtype=config.real_dtype, device=X.device)
+        N2 = self.ncol ** 2
+
+        N = self.ncol
+        adX = ad_matrix(X)  # (10, N^2, N^2) — batched over all 10 matrices at once
+
+        if self.massless:
+            # Pure IKKT: Pf(i/2 * gamma_bar^I ⊗ ad_{X_I})
+            # contribution = -0.5 * log|det(i/2 * sum_I gamma_bar^I ⊗ ad_{X_I})|
+            gb = self._gb.to(device=X.device, dtype=X.dtype)
+            # sum_I kron(gb[I], adX[I]): result[i*N2+k, j*N2+l] = sum_I gb[I,i,j]*adX[I,k,l]
+            M = 0.5j * torch.einsum("Iij,Ikl->ikjl", gb, adX).reshape(16 * N2, 16 * N2)
+        else:
+            # pIKKT: Pf(i/2 * gamma_bar^I ⊗ ad_{X_I} + i/8 * gamma_bar^{123} ⊗ 1)
+            # after factoring: -0.5 * log|det(1 - 4 G^I ⊗ ad_{X_I})|
+            G = self._G.to(device=X.device, dtype=X.dtype)
+            kron_sum = torch.einsum("Iij,Ikl->ikjl", G, adX).reshape(16 * N2, 16 * N2)
+            M = torch.eye(16 * N2, dtype=X.dtype, device=X.device) - 4.0 * kron_sum
+
+        # Lift the trace-mode zero in all 16 diagonal N^2 x N^2 blocks simultaneously.
+        # Adds (1/N)|vec(I)><vec(I)| to M[j*N2+d_i, j*N2+d_j] for all j, d_i, d_j.
+        diag_idx = get_trace_diag_indices_cached(N, M.device)           # (N,)
+        offsets = torch.arange(16, dtype=torch.long, device=M.device) * N2  # (16,)
+        g = (offsets.unsqueeze(1) + diag_idx.unsqueeze(0))             # (16, N)
+        M[g.unsqueeze(2).expand(16, N, N).reshape(-1),
+          g.unsqueeze(1).expand(16, N, N).reshape(-1)] += 1.0 / N
+
+        _, logdet = torch.slogdet(M)
+        return -0.5 * logdet.real
 
     def bosonic_potential(self, X: torch.Tensor | None = None) -> torch.Tensor:
         X = self._resolve_X(X)
 
         bos = -0.5 * _commutator_action_sum(X)
-        trace_sq = torch.einsum("bij,bji->b", X, X).real
-        bos = bos + torch.dot(self._mass_coeffs.to(device=X.device), trace_sq)
 
-        # (i/3) * eps^{ijk} Tr(X_i X_j X_k) with i,j,k in {1,2,3}
-        myers = 1j * (torch.trace(X[0] @ X[1] @ X[2]) - torch.trace(X[0] @ X[2] @ X[1]))
-        bos = bos + myers
+        if not self.massless:
+            trace_sq = torch.einsum("bij,bji->b", X, X).real
+            bos = bos + torch.dot(self._mass_coeffs.to(device=X.device), trace_sq)
+            # (i/3) * eps^{ijk} Tr(X_i X_j X_k) with i,j,k in {1,2,3}
+            myers = 1j * (torch.trace(X[0] @ X[1] @ X[2]) - torch.trace(X[0] @ X[2] @ X[1]))
+            bos = bos + myers
 
         return (self.ncol / self.g) * bos.real
 
@@ -104,9 +173,10 @@ class PIKKT10DModel(MatrixModel):
         return eigs, corrs
 
     def build_paths(self, name_prefix: str, data_path: str) -> dict[str, str]:
+        variant = "_ikkt" if self.massless else ""
         run_dir = os.path.join(
             data_path,
-            f"{name_prefix}_{self.model_name}_g{round(self.g, 4)}_N{self.ncol}",
+            f"{name_prefix}_{self.model_name}{variant}_g{round(self.g, 4)}_N{self.ncol}",
         )
         return {
             "dir": run_dir,
@@ -117,11 +187,17 @@ class PIKKT10DModel(MatrixModel):
         }
 
     def extra_config_lines(self) -> list[str]:
-        return [
+        if self.massless:
+            fdet_str = "-0.5 log|det(i/2 gamma_bar^I x ad_XI)|  [IKKT]"
+        else:
+            fdet_str = "-0.5 log|det(1 - 4 G^I x ad_XI)|  [pIKKT]"
+        lines = [
             f"  Coupling g               = {self.g}",
-            "  Omega                    = 1 (fixed)",
-            "  Fermion determinant      = placeholder (0)",
+            f"  Fermion determinant      = {fdet_str}",
         ]
+        if not self.massless:
+            lines.insert(1, "  Omega                    = 1 (fixed)")
+        return lines
 
     def status_string(self, X: torch.Tensor | None = None) -> str:
         X = self._resolve_X(X)
@@ -137,7 +213,8 @@ class PIKKT10DModel(MatrixModel):
                 "has_source": self.source is not None,
                 "model_variant": "pikkt10d",
                 "omega_fixed": 1.0,
-                "fermion_determinant": "disabled_placeholder",
+                "fermion_determinant": "ikkt_pfaffian" if self.massless else "pikkt_pfaffian",
+                "massless": self.massless,
             }
         )
         return meta

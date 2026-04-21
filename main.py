@@ -233,7 +233,7 @@ def run_simulation(args: argparse.Namespace) -> MatrixModel:
 
     if not resumed:
         ensure_output_slots([paths["eigs"], paths["corrs"]], force=True)
-        thermalize(model, hmc_params)
+        # thermalize(model, hmc_params)
 
     acc_count = 0
     ev_X_buf: list[np.ndarray] = []
