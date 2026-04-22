@@ -80,32 +80,49 @@ def configure_threads(
     return resolved_threads, resolved_interop
 
 
-def configure_device(noGPUFlag: bool | None) -> torch.device:
-    """Select device from CLI preference."""
-    
-    requested = "cpu" if noGPUFlag else "auto"
+def configure_device(target: str = "auto") -> torch.device:
+    """Select the compute device.
+
+    Args:
+        target: ``'auto'`` picks GPU when available, ``'cpu'`` forces CPU,
+                ``'gpu'`` requires CUDA (falls back to CPU with a warning).
+    """
     dev: torch.device
-    if requested == "auto":
+    if target == "cpu":
+        dev = torch.device("cpu")
+        print("Using CPU.")
+    elif target in ("gpu", "auto"):
         if torch.cuda.is_available():
             dev = torch.device("cuda")
             _enable_tf32()
             print(f"Using CUDA device: {torch.cuda.get_device_name(dev)}")
         else:
+            if target == "gpu":
+                print("WARNING: --device gpu requested but CUDA is not available; falling back to CPU.")
+            else:
+                print("No GPU found, using CPU.")
             dev = torch.device("cpu")
-            print("GPU not available, using CPU.")
     else:
-        dev = torch.device("cpu")
-        print("Using CPU.")
+        raise ValueError(f"--device must be 'cpu', 'gpu', or 'auto'; got {target!r}")
 
     global device
     device = dev
     return dev
 
 
-def configure_dtype(use_complex64: bool) -> torch.dtype:
-    """Set the global complex dtype used for matrices."""
+def configure_dtype(precision: str = "complex64") -> torch.dtype:
+    """Set the global floating-point precision.
+
+    Args:
+        precision: ``'complex64'`` (default, faster) or ``'complex128'`` (higher accuracy).
+    """
     global dtype, real_dtype
-    dtype = torch.complex64 if use_complex64 else torch.complex128
+    if precision == "complex64":
+        dtype = torch.complex64
+    elif precision == "complex128":
+        dtype = torch.complex128
+    else:
+        raise ValueError(f"--precision must be 'complex64' or 'complex128'; got {precision!r}")
     real_dtype = _real_dtype_for(dtype)
     return dtype
 

@@ -36,14 +36,14 @@ try:
     from MatrixModelHMC_pytorch.hmc import HMCParams, update, thermalize
     from MatrixModelHMC_pytorch.models.base import MatrixModel
     from MatrixModelHMC_pytorch.models.utils import gammaMajorana, gammaWeyl
-    from MatrixModelHMC_pytorch.cli import parse_args, DEFAULT_DATA_PATH, DEFAULT_PROFILE
+    from MatrixModelHMC_pytorch.cli import parse_args, DEFAULT_DATA_PATH, DEFAULT_PROFILE, _KNOWN_MODELS
     _MODEL_MODULE_PREFIX = "MatrixModelHMC_pytorch.models"
 except ImportError:  # pragma: no cover
     import config  # type: ignore
     from hmc import HMCParams, update, thermalize  # type: ignore
     from models.base import MatrixModel  # type: ignore
     from models.utils import gammaMajorana, gammaWeyl  # type: ignore
-    from cli import parse_args, DEFAULT_DATA_PATH, DEFAULT_PROFILE  # type: ignore
+    from cli import parse_args, DEFAULT_DATA_PATH, DEFAULT_PROFILE, _KNOWN_MODELS  # type: ignore
     _MODEL_MODULE_PREFIX = "models"
 
 
@@ -208,19 +208,20 @@ def run_simulation(args: argparse.Namespace) -> MatrixModel:
     ensure_output_slots([paths["eigs"], paths["corrs"]], force=args.force, allow_existing=allow_existing)
     write_run_metadata(paths["meta"], model, args)
 
-    print("\n------------------------------------------------")
-    print("Configuration:")
-    print(f"  Model                    = {model.model_name}")
-    print(f"  Matrix size N            = {model.ncol}")
-    print(f"  Number of Trajectories   = {args.niters}")
+    print("\n" + "=" * 52)
+    print("  Matrix Model HMC — run configuration")
+    print("=" * 52)
+    print(f"  Model          {model.model_name}")
+    print(f"  Matrix size N  {model.ncol}")
+    print(f"  Trajectories   {args.niters}")
     for line in model.extra_config_lines():
         print(line)
-    print(f"  Step size, Nsteps        = {args.step_size}, {hmc_params.nsteps} (dt = {hmc_params.dt})")
-    print(f"  Save                     = {args.save}")
-    print(f"  outputs                  = {paths['dir']}")
-    print(f"  device/dtype             = {config.device}/{config.dtype}")
-    print(f"  cpu threads              = {config.CPU_NUM_THREADS}/{config.CPU_NUM_INTEROP_THREADS} (intra/inter-op)")
-    print("------------------------------------------------\n")
+    print(f"  Step size      {args.step_size}  ({hmc_params.nsteps} steps, dt = {hmc_params.dt:.4g})")
+    print(f"  Device         {config.device}  [{config.dtype}]")
+    print(f"  CPU threads    {config.CPU_NUM_THREADS}/{config.CPU_NUM_INTEROP_THREADS} (intra/inter-op)")
+    print(f"  Checkpoint     {'every ' + str(args.save_every) + ' steps' if args.save else 'disabled'}")
+    print(f"  Output dir     {paths['dir']}")
+    print("=" * 52 + "\n")
 
     if args.dry_run:
         print("Dry run; resolved configuration:")
@@ -295,20 +296,6 @@ def run_simulation(args: argparse.Namespace) -> MatrixModel:
     stop_and_report_profile(profiler)
     return model
 
-
-# def main(argv: Sequence[str]):
-#     start_time = time.time()
-#     print("STARTED:", datetime.datetime.now().strftime("%d %B %Y %H:%M:%S"))
-
-#     args = parse_args(argv)
-#     config.configure_device(args.noGPU)
-#     config.configure_dtype(args.complex64)
-#     model = run_simulation(args)
-
-#     print("Runtime =", time.time() - start_time, "s")
-
-#     return model
-
 if __name__ == "__main__":
     args = parse_args(sys.argv[1:])
 
@@ -316,8 +303,8 @@ if __name__ == "__main__":
     print("STARTED:", datetime.datetime.now().strftime("%d %B %Y %H:%M:%S"))
 
     config.configure_threads(args.threads, args.interop_threads)
-    config.configure_device(args.noGPU)
-    config.configure_dtype(args.complex64)
+    config.configure_device(args.device)
+    config.configure_dtype(args.precision)
     model = run_simulation(args)
     
     print("Runtime =", time.time() - start_time, "s")

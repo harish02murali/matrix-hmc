@@ -116,7 +116,7 @@ def slogpfaff(A: torch.Tensor, block_size: int = 32) -> tuple[torch.Tensor, torc
         block_size: Block width for sign computation. Default 32.
 
     Returns:
-        (log_abs, sign): both shape (...). log_abs is real, sign has same dtype as A.
+        (sign, log_abs): both shape (...). sign has same dtype as A, log_abs is real.
         Gradients flow through log_abs via PyTorch's slogdet autograd.
     """
     *batch, n, m = A.shape
@@ -124,11 +124,11 @@ def slogpfaff(A: torch.Tensor, block_size: int = 32) -> tuple[torch.Tensor, torc
         raise ValueError(f"Matrix must be square, got {A.shape}")
     real_dtype = A.real.dtype if A.is_complex() else A.dtype
     if n % 2 == 1:
-        return (torch.full(batch, float("-inf"), dtype=real_dtype, device=A.device),
-                torch.zeros(batch, dtype=A.dtype, device=A.device))
+        return (torch.zeros(batch, dtype=A.dtype, device=A.device),
+                torch.full(batch, float("-inf"), dtype=real_dtype, device=A.device))
     if n == 0:
-        return (torch.zeros(batch, dtype=real_dtype, device=A.device),
-                torch.ones(batch, dtype=A.dtype, device=A.device))
+        return (torch.ones(batch, dtype=A.dtype, device=A.device),
+                torch.zeros(batch, dtype=real_dtype, device=A.device))
 
     # log|pf(A)| = (1/2) log|det(A)|: stable via LU, gradient-compatible
     log_abs = torch.linalg.slogdet(A).logabsdet / 2
