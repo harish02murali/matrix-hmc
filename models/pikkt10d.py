@@ -8,9 +8,10 @@ import numpy as np
 import torch
 
 from MatrixModelHMC_pytorch import config
-from MatrixModelHMC_pytorch.algebra import ad_matrix, get_trace_diag_indices_cached, random_hermitian, spinJMatrices
+from MatrixModelHMC_pytorch.algebra import ad_matrix, ad_matrix_real_antisymmetric, get_trace_diag_indices_cached, random_hermitian, spinJMatrices
 from MatrixModelHMC_pytorch.models.base import MatrixModel
 from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source
+from MatrixModelHMC_pytorch.pfaffian import pfaffian, slogpfaff
 
 model_name = "pikkt10d"
 
@@ -44,10 +45,10 @@ class PIKKT10DModel(MatrixModel):
         self._mass_coeffs = coeffs
 
         # Precompute gamma_bar^I (10, 16, 16) and G^I = gamma_bar^{123} @ gamma_bar^I (10, 16, 16)
-        self._gb, self._G = self._build_gammas(config.device, config.dtype)
+        self._gb, self._gb123, self._G = self._build_gammas(config.device, config.dtype)
 
     @staticmethod
-    def _build_gammas(device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
+    def _build_gammas(device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Build gamma_bar^I matrices and G^I = gamma_bar^{123} @ gamma_bar^I for I=1,...,10."""
         s1 = torch.tensor([[0, 1], [1, 0]], dtype=dtype, device=device)
         s2 = torch.tensor([[0, -1j], [1j, 0]], dtype=dtype, device=device)
@@ -81,12 +82,11 @@ class PIKKT10DModel(MatrixModel):
         # G^I = gamma_bar^{123} @ gamma_bar^I
         G = torch.einsum("ab,Ibc->Iac", gb123, gb)  # (10, 16, 16)
 
-        return gb, G
+        return gb, gb123, G
 
     def load_fresh(self, args):
         scale = float(np.sqrt(self.g / self.ncol))
-        mats = [scale * random_hermitian(self.ncol) for _ in range(self.nmat)]
-        X = torch.stack(mats, dim=0).to(dtype=config.dtype, device=config.device)
+        X = scale * random_hermitian(self.ncol, batchsize=self.nmat)
 
         if args.spin is not None:
             J_matrices = torch.from_numpy(spinJMatrices(args.spin)).to(
@@ -107,7 +107,7 @@ class PIKKT10DModel(MatrixModel):
         N2 = self.ncol ** 2
 
         N = self.ncol
-        adX = ad_matrix(X)  # (10, N^2, N^2) — batched over all 10 matrices at once
+        adX = 1j * ad_matrix(X)  # (10, N^2, N^2) — batched over all 10 matrices at once
 
         if self.massless:
             # Pure IKKT: Pf(i/2 * gamma_bar^I ⊗ ad_{X_I})
@@ -131,7 +131,35 @@ class PIKKT10DModel(MatrixModel):
           g.unsqueeze(1).expand(16, N, N).reshape(-1)] += 1.0 / N
 
         _, logdet = torch.slogdet(M)
-        return -0.5 * logdet.real
+        return -0.5 * logdet
+        # slogdet = torch.slogdet(M)
+        # return torch.tensor([slogdet[0], -0.5 * slogdet[1]])
+    
+    def fermion_pfaffian(self, X: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        # for massless, \text{Pf}(\frac{i}2 \bar\gamma^I \otimes \mathbf{X_I})
+        # for massive, \text{Pf}\left(\frac{i}2 \bar\gamma^I \otimes \mathbf{X_I} + \frac i8 \bar\gamma^{123} \otimes \mathbf{1}\right)
+        M = self.fermion_matrix(X)
+        return slogpfaff(M)
+
+    def fermion_matrix(self, X: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        # for massless, \text{Pf}(\frac{i}2 \bar\gamma^I \otimes \mathbf{X_I})
+        # for massive, \text{Pf}\left(\frac{i}2 \bar\gamma^I \otimes \mathbf{X_I} + \frac i8 \bar\gamma^{123} \otimes \mathbf{1}\right)
+        X = self._resolve_X(X)
+        N2 = self.ncol ** 2 - 1
+
+        N = self.ncol
+        adX = ad_matrix_real_antisymmetric(X, traceless=self.is_traceless).to(dtype=X.dtype)  # (10, N^2-1, N^2-1)
+
+        if self.massless:
+            gb = self._gb.to(device=X.device, dtype=X.dtype)
+            M = 0.5j * torch.einsum("Iij,Ikl->ikjl", gb, adX).reshape(16 * N2, 16 * N2)
+        else:
+            gb, gb123 = self._gb.to(device=X.device, dtype=X.dtype), self._gb123.to(device=X.device, dtype=X.dtype)
+            kron_sum = torch.einsum("Iij,Ikl->ikjl", gb, adX).reshape(16 * N2, 16 * N2)
+            M = 0.5j * kron_sum + 0.125j * torch.kron(gb123, torch.eye(N2, dtype=X.dtype, device=X.device))
+
+        # pfaffian = slogpfaff(M)
+        return M
 
     def bosonic_potential(self, X: torch.Tensor | None = None) -> torch.Tensor:
         X = self._resolve_X(X)
@@ -163,12 +191,13 @@ class PIKKT10DModel(MatrixModel):
                 .cpu()
                 .numpy()
             )
+            pf = self.fermion_pfaffian(X)
 
             trace_sq = torch.einsum("bij,bji->b", X, X).real
             tr_i = trace_sq[:3].sum() / (3 * self.ncol)
             tr_p = trace_sq[3:].sum() / (7 * self.ncol)
             comm = _commutator_action_sum(X).real / self.ncol
-            corrs = torch.stack([tr_i, tr_p, comm]).cpu().numpy()
+            corrs = torch.stack([tr_i, tr_p, comm, pf[0]]).cpu().numpy()
 
         return eigs, corrs
 

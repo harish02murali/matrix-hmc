@@ -8,7 +8,6 @@ import numpy as np
 import torch
 
 from MatrixModelHMC_pytorch import config
-from MatrixModelHMC_pytorch.algebra import random_hermitian
 from MatrixModelHMC_pytorch.models.base import MatrixModel
 from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, _anticommutator_action_sum, parse_source
 
@@ -42,8 +41,7 @@ class YangMillsModel(MatrixModel):
         self.mass = mass
 
     def load_fresh(self, args):
-        mats = [0*random_hermitian(self.ncol) for _ in range(self.nmat)]
-        X = torch.stack(mats, dim=0).to(dtype=config.dtype, device=config.device)
+        X = torch.zeros((self.nmat, self.ncol, self.ncol), dtype=config.dtype, device=config.device)
         self.set_state(X)
 
     def potential(self, X: torch.Tensor | None = None) -> torch.Tensor:

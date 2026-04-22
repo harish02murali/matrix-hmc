@@ -137,7 +137,7 @@ class PIKKTTypeIModel(MatrixModel):
         self._log_det_fn = base_fn
 
     def load_fresh(self, args):
-        X = torch.stack([0.01 * random_hermitian(self.ncol) for _ in range(self.nmat)])
+        X = 0.01 * random_hermitian(self.ncol, batchsize=self.nmat)
         self.set_state(X)
 
     def potential(self, X: torch.Tensor | None = None) -> torch.Tensor:

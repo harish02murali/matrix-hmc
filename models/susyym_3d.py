@@ -61,8 +61,7 @@ class SUSYYM3DModel(MatrixModel):
 		self.is_traceless = True
 
 	def load_fresh(self, args):
-		mats = [0.01 * random_hermitian(self.ncol, traceless=self.is_traceless) for _ in range(self.nmat)]
-		X = torch.stack(mats, dim=0).to(dtype=config.dtype, device=config.device)
+		X = 0.01 * random_hermitian(self.ncol, traceless=self.is_traceless, batchsize=self.nmat)
 		if self.source is not None:
 			X = self.source / 2
 		self.set_state(X)

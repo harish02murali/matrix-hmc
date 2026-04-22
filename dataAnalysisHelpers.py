@@ -26,7 +26,7 @@ class RunRecord:
         self.path = path
         self.metadata = self._load_json(path / "metadata.json")
         self.evals = self._load_npz(path / "evals.npz", empty=np.empty((0, 0, 0), dtype=np.complex128))
-        self.corrs = self._load_npz(path / "corrs.npz", empty=np.empty((0, 0), dtype=np.complex128)).real
+        self.corrs = self._load_npz(path / "corrs.npz", empty=np.empty((0, 0), dtype=np.complex128))
         self.mats = self._load_chunks(path / "all_mats")
         model_info = self.metadata.get("model", {})
         self.model_name = model_info.get("model_name")

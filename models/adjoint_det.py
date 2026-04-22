@@ -46,7 +46,7 @@ class AdjointDetModel(MatrixModel):
 
     def load_fresh(self, args):
         # X = torch.zeros((self.nmat, self.ncol, self.ncol), dtype=config.dtype, device=config.device)
-        X = 0.01 * torch.stack([random_hermitian(self.ncol, traceless=self.is_traceless) for i in range(self.nmat)])
+        X = 0.01 * random_hermitian(self.ncol, traceless=self.is_traceless, batchsize=self.nmat)
         if self.source is not None:
             X = self.source / 2
         self.set_state(X)

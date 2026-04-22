@@ -77,8 +77,7 @@ class PIKKTTypeIIModel(MatrixModel):
         return X_eff
 
     def load_fresh(self, args):
-        mats = [random_hermitian(self.ncol) for _ in range(self.nmat)]
-        X = torch.stack(mats, dim=0).to(dtype=config.dtype, device=config.device)
+        X = random_hermitian(self.ncol, batchsize=self.nmat)
 
         if args.spin is not None:
             J_matrices = torch.from_numpy(spinJMatrices(args.spin)).to(
