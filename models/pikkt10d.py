@@ -22,6 +22,7 @@ def build_model(args):
         couplings=args.coupling,
         source=args.source,
         massless=getattr(args, "massless", False),
+        pfaffian_every=getattr(args, "pfaffian_every", 1),
     )
 
 
@@ -30,12 +31,21 @@ class PIKKT10DModel(MatrixModel):
 
     model_name = model_name
 
-    def __init__(self, ncol: int, couplings: list, source: np.ndarray | None = None, massless: bool = False) -> None:
+    def __init__(
+        self,
+        ncol: int,
+        couplings: list,
+        source: np.ndarray | None = None,
+        massless: bool = False,
+        pfaffian_every: int = 1,
+    ) -> None:
         super().__init__(nmat=10, ncol=ncol)
         self.couplings = couplings
         self.g = self.couplings[0]
         self.omega = 1.0
         self.massless = massless
+        self.pfaffian_every = int(pfaffian_every)
+        self._measure_calls = 0
         self.source = parse_source(source, self.nmat, config.device, config.dtype)
         self.is_hermitian = True
         self.is_traceless = True
@@ -185,19 +195,23 @@ class PIKKT10DModel(MatrixModel):
     def measure_observables(self, X: torch.Tensor | None = None):
         with torch.no_grad():
             X = self._resolve_X(X)
+            self._measure_calls += 1
             eigs = [torch.linalg.eigvalsh(mat).cpu().numpy() for mat in X]
             eigs.append(
                 torch.linalg.eigvalsh(X[0] @ X[0] + X[1] @ X[1] + X[2] @ X[2])
                 .cpu()
                 .numpy()
             )
-            pf = self.fermion_pfaffian(X)
+            if (self._measure_calls % self.pfaffian_every) == 0:
+                pf0 = self.fermion_pfaffian(X)[0]
+            else:
+                pf0 = torch.full((), complex(float("nan"), float("nan")), dtype=X.dtype, device=X.device)
 
             trace_sq = torch.einsum("bij,bji->b", X, X).real
             tr_i = trace_sq[:3].sum() / (3 * self.ncol)
             tr_p = trace_sq[3:].sum() / (7 * self.ncol)
             comm = _commutator_action_sum(X).real / self.ncol
-            corrs = torch.stack([tr_i, tr_p, comm, pf[0]]).cpu().numpy()
+            corrs = torch.stack([tr_i, tr_p, comm, pf0]).cpu().numpy()
 
         return eigs, corrs
 
@@ -223,6 +237,7 @@ class PIKKT10DModel(MatrixModel):
         lines = [
             f"  Coupling g               = {self.g}",
             f"  Fermion determinant      = {fdet_str}",
+            f"  Pfaffian every           = {self.pfaffian_every}",
         ]
         if not self.massless:
             lines.insert(1, "  Omega                    = 1 (fixed)")
@@ -244,6 +259,7 @@ class PIKKT10DModel(MatrixModel):
                 "omega_fixed": 1.0,
                 "fermion_determinant": "ikkt_pfaffian" if self.massless else "pikkt_pfaffian",
                 "massless": self.massless,
+                "pfaffian_every": self.pfaffian_every,
             }
         )
         return meta

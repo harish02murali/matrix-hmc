@@ -141,6 +141,13 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     type2_group.add_argument("--bosonic", action="store_true", help="Disable fermionic determinant term")
     type2_group.add_argument(
+        "--pfaffian-every",
+        type=int,
+        default=1,
+        dest="pfaffian_every",
+        help="For pikkt10d, evaluate fermion Pfaffian observables every K trajectories (stores NaN otherwise)",
+    )
+    type2_group.add_argument(
         "--lorentzian",
         action="store_true",
         help="Replace X4 -> i X4 in the potential (and corresponding force)",
@@ -244,6 +251,8 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--step-size must be positive")
     if args.save_every < 1:
         raise ValueError("--save-every must be positive")
+    if args.pfaffian_every < 1:
+        raise ValueError("--pfaffian-every must be positive")
     if args.threads is not None and args.threads < 1:
         raise ValueError("--threads must be positive")
     if args.interop_threads is not None and args.interop_threads < 1:
