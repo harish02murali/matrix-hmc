@@ -1,11 +1,11 @@
 # matrix-hmc
 
-PyTorch implementation of Hybrid Monte Carlo (HMC) for polarized IKKT-like matrix models.
+A GPU-accelerated implementation of Hybrid Monte Carlo (HMC) for matrix models, with automatic fallback to CPU when a GPU is unavailable. Built on PyTorch, it provides automatic differentiation, efficient Pfaffian computations, and optimized linear algebra routines. The package includes a collection of built-in bosonic and fermionic models, as well as a straightforward interface for implementing custom models.
 
 ## Installation
 
 ```bash
-pip install -e .
+pip install matrix-hmc
 ```
 
 Requires Python ≥ 3.9, `torch`, and `numpy`.
