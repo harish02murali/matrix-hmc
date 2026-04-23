@@ -1,4 +1,4 @@
-"""Comprehensive tests for MatrixModelHMC_pytorch."""
+"""Comprehensive tests for matrix_hmc."""
 
 import math
 import sys
@@ -13,7 +13,7 @@ PARENT = ROOT.parent
 if str(PARENT) not in sys.path:
     sys.path.insert(0, str(PARENT))
 
-from MatrixModelHMC_pytorch.algebra import (
+from matrix_hmc.algebra import (
     add_trace_projector_inplace,
     ad_matrix,
     comm,
@@ -25,22 +25,22 @@ from MatrixModelHMC_pytorch.algebra import (
     random_hermitian,
     spinJMatrices,
 )
-from MatrixModelHMC_pytorch.pfaffian import (
+from matrix_hmc.pfaffian import (
     make_skew_symmetric,
     pfaffian,
     slogpfaff,
     verify_pfaffian,
 )
-from MatrixModelHMC_pytorch.models.utils import (
+from matrix_hmc.models.utils import (
     _anticommutator_action_sum,
     _commutator_action_sum,
     _fermion_det_log_identity_plus_sum_adX,
     parse_source,
 )
-from MatrixModelHMC_pytorch.models.yangmills import YangMillsModel
-from MatrixModelHMC_pytorch.models.pikkt4d_type1 import PIKKTTypeIModel
-from MatrixModelHMC_pytorch.models.pikkt10d import PIKKT10DModel
-from MatrixModelHMC_pytorch.hmc import HMCParams, hamil, leapfrog, update
+from matrix_hmc.models.yangmills import YangMillsModel
+from matrix_hmc.models.pikkt4d_type1 import PIKKTTypeIModel
+from matrix_hmc.models.pikkt10d import PIKKT10DModel
+from matrix_hmc.hmc import HMCParams, hamil, leapfrog, update
 
 
 # ---------------------------------------------------------------------------

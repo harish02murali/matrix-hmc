@@ -7,10 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 import torch
 
-try:
-    from MatrixModelHMC_pytorch.algebra import random_hermitian
-except ImportError:  # pragma: no cover
-    from algebra import random_hermitian  # type: ignore
+from matrix_hmc.algebra import random_hermitian
 
 @dataclass
 class HMCParams:

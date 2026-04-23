@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from MatrixModelHMC_pytorch import cli
+from matrix_hmc import cli
 
 
 class TestCliModelDiscovery(unittest.TestCase):

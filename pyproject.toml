@@ -3,13 +3,20 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "MatrixModelHMC_pytorch"
-version = "0.0.0"
-description = "Hybrid Monte Carlo drivers for polarized IKKT-like matrix models"
+name = "matrix-hmc"
+version = "0.1.0"
+description = "Hybrid Monte Carlo for polarized IKKT-like matrix models"
 readme = "README.md"
 requires-python = ">=3.9"
+license = { text = "MIT" }
 dependencies = ["numpy", "torch"]
 
+[project.scripts]
+matrix-hmc = "matrix_hmc.main:main"
+
 [tool.setuptools]
-packages = ["MatrixModelHMC_pytorch", "MatrixModelHMC_pytorch.models"]
-package-dir = { MatrixModelHMC_pytorch = "." }
+packages = ["matrix_hmc", "matrix_hmc.models"]
+package-dir = { matrix_hmc = "." }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

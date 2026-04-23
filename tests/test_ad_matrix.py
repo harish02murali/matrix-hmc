@@ -10,15 +10,15 @@ PARENT = ROOT.parent
 if str(PARENT) not in sys.path:
     sys.path.insert(0, str(PARENT))
 
-from MatrixModelHMC_pytorch.algebra import (
+from matrix_hmc.algebra import (
     ad_matrix,
     ad_matrix_real_antisymmetric,
     dagger,
     get_traceless_maps_cached,
     random_hermitian,
 )
-from MatrixModelHMC_pytorch.models.pikkt10d import PIKKT10DModel
-from MatrixModelHMC_pytorch.pfaffian import make_skew_symmetric, slogpfaff
+from matrix_hmc.models.pikkt10d import PIKKT10DModel
+from matrix_hmc.pfaffian import make_skew_symmetric, slogpfaff
 
 
 def vec_col(mat: torch.Tensor) -> torch.Tensor:

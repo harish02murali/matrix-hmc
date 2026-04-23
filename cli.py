@@ -12,16 +12,16 @@ Priority order (highest → lowest):
 Quick-start examples::
 
     # run with all defaults for a model
-    python -m MatrixModelHMC_pytorch.main --model yangmills
+    matrix-hmc --model yangmills
 
     # load a config file, override one value on the command line
-    python -m MatrixModelHMC_pytorch.main --config myrun.yaml --niters 2000
+    matrix-hmc --config myrun.yaml --niters 2000
 
     # print available models
-    python -m MatrixModelHMC_pytorch.main --list-models
+    matrix-hmc --list-models
 
     # dump a sample YAML config for a model (stdout)
-    python -m MatrixModelHMC_pytorch.main --model pikkt4d_type1 --generate-config
+    matrix-hmc --model pikkt4d_type1 --generate-config
 """
 
 from __future__ import annotations
@@ -105,12 +105,11 @@ MODEL_DEFAULTS: dict[str, dict] = {
 def _discover_known_models() -> list[str]:
     if not _MODEL_DIR.is_dir():
         return []
-    names = [
-        path.stem
-        for path in _MODEL_DIR.glob("*.py")
-        if not path.stem.startswith("_") and path.stem not in _MODEL_DISCOVERY_EXCLUDES
-    ]
-    return sorted(names)
+    return sorted(
+        p.stem
+        for p in _MODEL_DIR.glob("*.py")
+        if not p.stem.startswith("_") and p.stem not in _MODEL_DISCOVERY_EXCLUDES
+    )
 
 
 _KNOWN_MODELS = _discover_known_models()
@@ -237,12 +236,8 @@ def _validate_source_shape(source: np.ndarray, ncol: int, expected_nmat: int | N
 
 def _print_model_list() -> None:
     print("Available models:\n")
-    # print(f"  {'Model':<28}  Default ncol")
     print(f"  {'-'*28}")
     for name in _KNOWN_MODELS:
-        d = MODEL_DEFAULTS.get(name, {})
-        # ncol = d.get("ncol", "—")
-        # tag = "fermionic" if name in fermionic else "bosonic"
         print(f"  {name:<28}")
     print()
 
@@ -254,7 +249,7 @@ def _generate_config_yaml(model_name: str) -> str:
     lines = [
         f"# Sample config for --model {model_name}",
         f"# Edit values as needed, then run:",
-        f"#   python -m MatrixModelHMC_pytorch.main --config this_file.yaml",
+        f"#   matrix-hmc --config this_file.yaml",
         "",
         f"model: {model_name}",
         f"ncol: {d.get('ncol', 10)}",
@@ -319,8 +314,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="MODEL",
         help=(
-            "Which model to simulate. "
-            "Run --list-models for choices and their defaults."
+            "Built-in model name (run --list-models) or path to a .py file "
+            "that defines build_model(args)."
         ),
     )
     parser.add_argument("--ncol", type=int, default=None,
@@ -495,9 +490,14 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     if args.model is None:
         parser.error(
             "--model is required (or set 'model:' in a --config file).\n"
-            "Run --list-models to see available choices."
+            "Run --list-models to see available built-in models, "
+            "or pass a path: --model ./my_model.py"
         )
-    args.model = args.model.strip().lower()
+    args.model = args.model.strip()
+    # Only lowercase for named models (preserve case in file paths)
+    is_path = "/" in args.model or args.model.endswith(".py")
+    if not is_path:
+        args.model = args.model.lower()
 
     # ---- apply per-model fallbacks for args that may still be None ----
     fallback = MODEL_DEFAULTS.get(args.model, {})
@@ -523,7 +523,13 @@ def validate_args(args: argparse.Namespace) -> None:
     if not args.coupling:
         raise ValueError("--coupling requires at least one value")
 
-    model_lower = args.model.lower()
+    model_val = args.model
+    # Skip model-specific validation for file-path models
+    if "/" in model_val or model_val.endswith(".py"):
+        _validate_common_args(args)
+        return
+
+    model_lower = model_val.lower()
 
     if model_lower == "1mm":
         if len(args.coupling) < 1:
@@ -584,6 +590,24 @@ def validate_args(args: argparse.Namespace) -> None:
     if args.source is not None:
         expected_nmat = args.nmat if args.nmat is not None else _default_nmat_for_model(model_lower)
         _validate_source_shape(args.source, args.ncol, expected_nmat)
+
+
+def _validate_common_args(args: argparse.Namespace) -> None:
+    """Validations that apply regardless of model (used for file-path models)."""
+    if args.nsteps < 1:
+        raise ValueError("--nsteps must be positive")
+    if args.step_size <= 0:
+        raise ValueError("--step-size must be positive")
+    if args.save_every < 1:
+        raise ValueError("--save-every must be positive")
+    if args.pfaffian_every < 1:
+        raise ValueError("--pfaffian-every must be positive")
+    if args.threads is not None and args.threads < 1:
+        raise ValueError("--threads must be positive")
+    if args.interop_threads is not None and args.interop_threads < 1:
+        raise ValueError("--interop-threads must be positive")
+    if args.source is not None:
+        _validate_source_shape(args.source, args.ncol, args.nmat)
 
 
 __all__ = [

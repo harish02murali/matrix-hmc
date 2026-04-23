@@ -14,6 +14,7 @@ import argparse
 import cProfile
 import datetime
 import importlib
+import importlib.util
 import json
 import os
 import pstats
@@ -26,25 +27,39 @@ from typing import Iterable, Sequence
 import numpy as np
 import torch
 
-# Support both package and script execution
-if not __package__:
-    # When executed as "python MatrixModelHMC_pytorch/main.py"
-    sys.path.append(str(Path(__file__).resolve().parent.parent))
+from matrix_hmc import config
+from matrix_hmc.hmc import HMCParams, update, thermalize
+from matrix_hmc.models.base import MatrixModel
+from matrix_hmc.cli import parse_args, DEFAULT_DATA_PATH, DEFAULT_PROFILE, _KNOWN_MODELS
 
-try:
-    from MatrixModelHMC_pytorch import config
-    from MatrixModelHMC_pytorch.hmc import HMCParams, update, thermalize
-    from MatrixModelHMC_pytorch.models.base import MatrixModel
-    from MatrixModelHMC_pytorch.models.utils import gammaMajorana, gammaWeyl
-    from MatrixModelHMC_pytorch.cli import parse_args, DEFAULT_DATA_PATH, DEFAULT_PROFILE, _KNOWN_MODELS
-    _MODEL_MODULE_PREFIX = "MatrixModelHMC_pytorch.models"
-except ImportError:  # pragma: no cover
-    import config  # type: ignore
-    from hmc import HMCParams, update, thermalize  # type: ignore
-    from models.base import MatrixModel  # type: ignore
-    from models.utils import gammaMajorana, gammaWeyl  # type: ignore
-    from cli import parse_args, DEFAULT_DATA_PATH, DEFAULT_PROFILE, _KNOWN_MODELS  # type: ignore
-    _MODEL_MODULE_PREFIX = "models"
+_BUILTIN_MODEL_DIR = Path(__file__).resolve().parent / "models"
+
+
+def _load_model_module(model_name_or_path: str):
+    """Return a model module.
+
+    If the argument contains a path separator or ends in .py it is treated as a
+    file path; otherwise it is looked up by name in the built-in models directory.
+    """
+    is_path = "/" in model_name_or_path or os.sep in model_name_or_path or model_name_or_path.endswith(".py")
+
+    if is_path:
+        p = Path(model_name_or_path)
+        if not p.exists():
+            raise ValueError(f"Model file not found: {p}")
+        spec = importlib.util.spec_from_file_location(p.stem, p)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        return mod
+
+    if (_BUILTIN_MODEL_DIR / f"{model_name_or_path}.py").exists():
+        return importlib.import_module(f"matrix_hmc.models.{model_name_or_path}")
+
+    known = sorted(p.stem for p in _BUILTIN_MODEL_DIR.glob("*.py") if not p.stem.startswith("_"))
+    raise ValueError(
+        f"Unknown model '{model_name_or_path}'. Built-in models: {known}. "
+        "To use a custom model, pass the path: --model ./my_model.py"
+    )
 
 
 DATA_PATH = DEFAULT_DATA_PATH
@@ -182,20 +197,12 @@ def write_run_metadata(path: str, model: MatrixModel, args: argparse.Namespace) 
 def run_simulation(args: argparse.Namespace) -> MatrixModel:
     """Configure model/HMC parameters and execute the requested number of trajectories."""
     dt = args.step_size / args.nsteps
-    model_name = str(getattr(args, "model", "")).strip().lower()
+    model_name = str(getattr(args, "model", "")).strip()
     if not model_name:
-        raise ValueError("Model name is empty; provide --model <model_name>")
-    module_path = f"{_MODEL_MODULE_PREFIX}.{model_name}"
-    try:
-        model_module = importlib.import_module(module_path)
-    except ModuleNotFoundError as exc:
-        if exc.name == module_path:
-            raise ValueError(f"Unknown model '{model_name}'. Expected file models/{model_name}.py") from exc
-        raise
-
+        raise ValueError("Model name is empty; provide --model <name> or --model ./model.py")
+    model_module = _load_model_module(model_name)
     if not hasattr(model_module, "build_model"):
-        raise ValueError(f"Model module '{module_path}' must define build_model(args)")
-
+        raise ValueError(f"Model module for '{model_name}' must define build_model(args)")
     model = model_module.build_model(args)
     hmc_params = HMCParams(
         dt=dt,
@@ -296,15 +303,16 @@ def run_simulation(args: argparse.Namespace) -> MatrixModel:
     stop_and_report_profile(profiler)
     return model
 
-if __name__ == "__main__":
+def main() -> None:
     args = parse_args(sys.argv[1:])
-
     start_time = time.time()
     print("STARTED:", datetime.datetime.now().strftime("%d %B %Y %H:%M:%S"))
-
     config.configure_threads(args.threads, args.interop_threads)
     config.configure_device(args.device)
     config.configure_dtype(args.precision)
-    model = run_simulation(args)
-    
+    run_simulation(args)
     print("Runtime =", time.time() - start_time, "s")
+
+
+if __name__ == "__main__":
+    main()

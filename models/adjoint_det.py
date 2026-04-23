@@ -7,15 +7,15 @@ import os
 import numpy as np
 import torch
 
-from MatrixModelHMC_pytorch import config
-from MatrixModelHMC_pytorch.models.base import MatrixModel
-from MatrixModelHMC_pytorch.models.utils import (
+from matrix_hmc import config
+from matrix_hmc.models.base import MatrixModel
+from matrix_hmc.models.utils import (
     _anticommutator_action_sum,
     _commutator_action_sum,
     _fermion_det_log_identity_plus_sum_adX,
     parse_source,
 )
-from MatrixModelHMC_pytorch.algebra import random_hermitian
+from matrix_hmc.algebra import random_hermitian
 model_name = "adjoint_det"
 
 def build_model(args):

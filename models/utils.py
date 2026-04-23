@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from MatrixModelHMC_pytorch import config
-from MatrixModelHMC_pytorch.algebra import kron_2d
+from matrix_hmc import config
+from matrix_hmc.algebra import kron_2d
 
 
 def parse_source(

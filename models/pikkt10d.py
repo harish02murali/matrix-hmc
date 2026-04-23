@@ -7,11 +7,11 @@ import os
 import numpy as np
 import torch
 
-from MatrixModelHMC_pytorch import config
-from MatrixModelHMC_pytorch.algebra import ad_matrix, ad_matrix_real_antisymmetric, get_trace_diag_indices_cached, random_hermitian, spinJMatrices
-from MatrixModelHMC_pytorch.models.base import MatrixModel
-from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source
-from MatrixModelHMC_pytorch.pfaffian import pfaffian, slogpfaff
+from matrix_hmc import config
+from matrix_hmc.algebra import ad_matrix, ad_matrix_real_antisymmetric, get_trace_diag_indices_cached, random_hermitian, spinJMatrices
+from matrix_hmc.models.base import MatrixModel
+from matrix_hmc.models.utils import _commutator_action_sum, parse_source
+from matrix_hmc.pfaffian import pfaffian, slogpfaff
 
 model_name = "pikkt10d"
 

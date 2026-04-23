@@ -8,8 +8,8 @@ from argparse import Namespace
 import numpy as np
 import torch
 
-from MatrixModelHMC_pytorch import config
-from MatrixModelHMC_pytorch.models.base import MatrixModel
+from matrix_hmc import config
+from matrix_hmc.models.base import MatrixModel
 
 model_name = "1mm"
 

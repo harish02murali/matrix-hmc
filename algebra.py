@@ -6,10 +6,7 @@ import torch
 from typing import Optional
 import numpy as np
 
-try:
-    from MatrixModelHMC_pytorch import config
-except ImportError:  # pragma: no cover
-    import config  # type: ignore
+from matrix_hmc import config
 
 # Caches keyed by (size, device, dtype) to avoid repeated allocations.
 _traceless_cache: dict[tuple[int, str, Optional[int], torch.dtype], tuple[torch.Tensor, torch.Tensor]] = {}

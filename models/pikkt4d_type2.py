@@ -7,8 +7,8 @@ import os
 import numpy as np
 import torch
 
-from MatrixModelHMC_pytorch import config
-from MatrixModelHMC_pytorch.algebra import (
+from matrix_hmc import config
+from matrix_hmc.algebra import (
     add_trace_projector_inplace,
     ad_matrix,
     get_eye_cached,
@@ -16,8 +16,8 @@ from MatrixModelHMC_pytorch.algebra import (
     random_hermitian,
     spinJMatrices,
 )
-from MatrixModelHMC_pytorch.models.base import MatrixModel
-from MatrixModelHMC_pytorch.models.utils import _commutator_action_sum, parse_source, source_grad_inplace
+from matrix_hmc.models.base import MatrixModel
+from matrix_hmc.models.utils import _commutator_action_sum, parse_source, source_grad_inplace
 
 model_name = "pikkt4d_type2"
 

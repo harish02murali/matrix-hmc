@@ -7,15 +7,15 @@ import os
 import numpy as np
 import torch
 
-from MatrixModelHMC_pytorch import config
-from MatrixModelHMC_pytorch.algebra import (
+from matrix_hmc import config
+from matrix_hmc.algebra import (
 	add_trace_projector_inplace,
 	ad_matrix,
 	get_eye_cached,
 	random_hermitian,
 )
-from MatrixModelHMC_pytorch.models.base import MatrixModel
-from MatrixModelHMC_pytorch.models.utils import (
+from matrix_hmc.models.base import MatrixModel
+from matrix_hmc.models.utils import (
 	_anticommutator_action_sum,
 	_commutator_action_sum,
 	parse_source,
