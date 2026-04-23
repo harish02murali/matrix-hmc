@@ -76,16 +76,26 @@ class _PfaffianFn(torch.autograd.Function):
 
 
 def pfaffian(A: torch.Tensor, block_size: int = 32) -> torch.Tensor:
-    """Pfaffian of a skew-symmetric matrix. Supports gradients.
+    """Compute the Pfaffian of a skew-symmetric matrix, with full autograd support.
 
-    For large N where pf(A) overflows, use log_pfaffian instead.
+    The Pfaffian is computed as ``sign(pf(A)) * exp((1/2) log|det(A)|)`` so
+    that the value stays representable for moderate ``N``.  For very large ``N``
+    where ``pf(A)`` would overflow use :func:`slogpfaff` instead.
+
+    Gradient note: PyTorch's native ``slogdet`` provides the gradient for
+    ``log|det|``; the sign factor is computed without gradient via blocked
+    Parlett-Reid (see :func:`slogpfaff`).
 
     Args:
-        A: Skew-symmetric (..., n, n)
-        block_size: Outer-loop block width b = 2*block_size. Default 32.
+        A: Skew-symmetric tensor of shape ``(..., n, n)``.
+        block_size: Outer-loop block width ``b = 2 * block_size`` used by the
+            internal sign-computation routine. Default ``32``.
 
     Returns:
-        pf(A), shape (...)
+        Pfaffian ``pf(A)`` of shape ``(...)``, same dtype as *A*.
+
+    Raises:
+        ValueError: If *A* is not square.
     """
     *batch, n, m = A.shape
     if n != m:
@@ -98,26 +108,31 @@ def pfaffian(A: torch.Tensor, block_size: int = 32) -> torch.Tensor:
 
 
 def slogpfaff(A: torch.Tensor, block_size: int = 32) -> tuple[torch.Tensor, torch.Tensor]:
-    """Overflow-safe Pfaffian: returns (log|pf(A)|, sign) where pf(A) = sign * exp(log|pf(A)|).
+    """Overflow-safe Pfaffian returning ``(sign, log|pf(A)|)``.
 
-    log|pf(A)| = (1/2) log|det(A)| via torch.linalg.slogdet — numerically stable (LU with
-    partial pivoting) and gradient-supported by PyTorch's native autograd.
+    The relationship ``pf(A) = sign * exp(log|pf(A)|)`` is preserved.
+    ``log|pf(A)| = (1/2) log|det(A)|`` is computed via
+    :func:`torch.linalg.slogdet` (numerically stable LU with partial pivoting)
+    and its gradient is tracked by PyTorch's native autograd.
 
-    sign is computed via blocked Parlett-Reid with local partial pivoting: at each inner
-    step the largest element in the current block is chosen as pivot, then swapped into
-    position via a global congruence transformation. This gives accurate sign tracking
-    even when pf(A) can be positive or negative (sign problem present).
+    The sign is computed via blocked Parlett-Reid with local partial pivoting
+    (detached from the autograd graph) — accurate for both sign-problem-free
+    cases (``sign = ±1``) and complex phases.
 
-    For real A:  sign is ±1 (as a float tensor).
-    For complex A: sign is a unit complex number (the phase of pf(A)).
+    For real *A* the sign is ``±1`` (a float tensor).
+    For complex *A* the sign is a unit complex number (phase of ``pf(A)``).
 
     Args:
-        A: Skew-symmetric (..., n, n)
-        block_size: Block width for sign computation. Default 32.
+        A: Skew-symmetric tensor of shape ``(..., n, n)``.
+        block_size: Block width for the sign computation. Default ``32``.
 
     Returns:
-        (sign, log_abs): both shape (...). sign has same dtype as A, log_abs is real.
-        Gradients flow through log_abs via PyTorch's slogdet autograd.
+        Tuple ``(sign, log_abs)`` both of shape ``(...)``.  *sign* has the
+        same dtype as *A*; *log_abs* is real.  Gradients flow through
+        *log_abs* via PyTorch's ``slogdet`` autograd.
+
+    Raises:
+        ValueError: If *A* is not square.
     """
     *batch, n, m = A.shape
     if n != m:
@@ -140,12 +155,30 @@ def slogpfaff(A: torch.Tensor, block_size: int = 32) -> tuple[torch.Tensor, torc
 
 
 def make_skew_symmetric(A: torch.Tensor) -> torch.Tensor:
-    """Return (A - A^T) / 2."""
+    """Return the skew-symmetric part of *A*, i.e. ``(A - A^T) / 2``.
+
+    Args:
+        A: Input tensor of shape ``(..., n, n)``.
+
+    Returns:
+        Skew-symmetric tensor of the same shape.
+    """
     return (A - A.transpose(-2, -1)) / 2
 
 
 def verify_pfaffian(A: torch.Tensor, pf: torch.Tensor, tol: float = 1e-5) -> bool:
-    """Return True if pf(A)^2 == det(A) within tolerance."""
+    """Validate the Pfaffian identity ``pf(A)^2 == det(A)`` within a tolerance.
+
+    Useful as a quick sanity check after computing a Pfaffian.
+
+    Args:
+        A: Skew-symmetric square tensor.
+        pf: Pfaffian of *A* (result of :func:`pfaffian` or :func:`slogpfaff`).
+        tol: Absolute and relative tolerance passed to :func:`torch.allclose`.
+
+    Returns:
+        ``True`` if ``pf**2`` and ``det(A)`` agree within *tol*.
+    """
     return torch.allclose(pf ** 2, torch.linalg.det(A), atol=tol, rtol=tol)
 
 

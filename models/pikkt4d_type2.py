@@ -29,6 +29,7 @@ def build_model(args):
         source=args.source,
         bosonic=getattr(args, "bosonic", False),
         lorentzian=getattr(args, "lorentzian", False),
+        spin=getattr(args, "spin", None),
     )
 
 
@@ -43,7 +44,35 @@ def _adjoint_grad_from_matrix(M: torch.Tensor, ncol: int) -> torch.Tensor:
 
 
 class PIKKTTypeIIModel(MatrixModel):
-    """Type II polarized IKKT model definition."""
+    """Type II polarized IKKT model with 4 bosonic matrices and a fermionic determinant.
+
+    The action combines a Yang-Mills bosonic term with the ``log|det|`` of the
+    Type-II Dirac operator built from two pairs of complex-combined adjoint
+    actions:
+
+    .. math::
+
+        S = \\frac{N}{g} \\left[ \\mathrm{Tr}(\\sum_i X_i^2)
+            - \\frac{1}{2} \\sum_{i<j} \\mathrm{Tr}([X_i, X_j]^2) \\right]
+            - \\frac{1}{2} \\log |\\det M_F(X)|
+
+    A Lorentzian signature variant (``lorentzian=True``) makes ``X_4``
+    imaginary; a purely bosonic run (``bosonic=True``) drops the fermionic
+    contribution.  A fuzzy-sphere initial configuration is available via
+    *spin*.
+
+    Args:
+        ncol: Matrix size ``N``.
+        couplings: Two-element list ``[g, omega]`` where *g* is the 't Hooft
+            coupling and *omega* controls the Omega-background deformation.
+        source: Optional external source (see
+            :func:`~matrix_hmc.models.utils.parse_source`).
+        bosonic: If ``True``, omit the fermionic determinant. Default ``False``.
+        lorentzian: If ``True``, analytically continue ``X_4 -> i X_4``.
+            Default ``False``.
+        spin: If not ``None``, initialise the first three matrices using
+            a spin-``j`` fuzzy-sphere background.
+    """
 
     model_name = model_name
 
@@ -54,6 +83,7 @@ class PIKKTTypeIIModel(MatrixModel):
         source: np.ndarray | None = None,
         bosonic: bool = False,
         lorentzian: bool = False,
+        spin: float | None = None,
     ) -> None:
         super().__init__(nmat=4, ncol=ncol)
         self.couplings = couplings
@@ -61,6 +91,7 @@ class PIKKTTypeIIModel(MatrixModel):
         self.omega = self.couplings[1]
         self.bosonic = bosonic
         self.lorentzian = lorentzian
+        self.spin = spin
         self.source = parse_source(source, self.nmat, config.device, config.dtype)
         self.is_hermitian = True
         self.is_traceless = True
@@ -76,11 +107,11 @@ class PIKKTTypeIIModel(MatrixModel):
         X_eff[3] = 1j * X_eff[3]
         return X_eff
 
-    def load_fresh(self, args):
+    def load_fresh(self):
         X = random_hermitian(self.ncol, batchsize=self.nmat)
 
-        if args.spin is not None:
-            J_matrices = torch.from_numpy(spinJMatrices(args.spin)).to(
+        if self.spin is not None:
+            J_matrices = torch.from_numpy(spinJMatrices(self.spin)).to(
                 dtype=config.dtype, device=config.device
             )
             ntimes = self.ncol // J_matrices.shape[1]

@@ -16,12 +16,27 @@ _hermitian_diag_basis_change_cache: dict[tuple[int, str, Optional[int], torch.dt
 
 
 def dagger(a: torch.Tensor) -> torch.Tensor:
-    """Hermitian conjugate."""
+    """Return the Hermitian conjugate (conjugate transpose) of a matrix.
+
+    Args:
+        a: Input tensor of shape ``(..., m, n)``.
+
+    Returns:
+        Tensor of shape ``(..., n, m)`` equal to ``a^†``.
+    """
     return a.transpose(-1, -2).conj()
 
 
 def comm(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
-    """Matrix commutator [A, B]."""
+    """Compute the matrix commutator ``[A, B] = AB - BA``.
+
+    Args:
+        A: Left matrix, shape ``(..., n, n)``.
+        B: Right matrix, shape ``(..., n, n)``.
+
+    Returns:
+        Commutator ``AB - BA``, same shape as inputs.
+    """
     return A @ B - B @ A
 
 
@@ -31,11 +46,22 @@ def random_hermitian(
     traceless: bool = True,
     batchsize: int | None = None,
 ) -> torch.Tensor:
-    """
-    Draw a random Hermitian matrix.
+    """Draw a random Hermitian matrix (or a batch of them) from a Gaussian distribution.
 
-    Set ``traceless=False`` to retain the identity mode.
-    If ``batchsize`` is provided, return a batch of ``batchsize`` matrices.
+    Off-diagonal entries are drawn from a complex Gaussian with variance 1/2 per
+    real/imaginary component; diagonal entries are real Gaussians.  If
+    ``traceless=True`` the identity mode is projected out so the result lies in
+    the Lie algebra ``su(N)``.
+
+    Args:
+        n: Matrix size (returned matrix is ``n x n``).
+        traceless: If ``True`` (default), subtract the trace to enforce
+            ``Tr(M) = 0``.
+        batchsize: When given, return a batch of shape
+            ``(batchsize, n, n)``; otherwise return shape ``(n, n)``.
+
+    Returns:
+        Random Hermitian tensor on ``config.device`` with ``config.dtype``.
     """
     shape = (batchsize, n, n) if batchsize is not None else (n, n)
     re = torch.randn(*shape, device=config.device, dtype=config.real_dtype)
@@ -68,10 +94,17 @@ def random_hermitian(
 
 
 def kron_2d(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
-    """
-    Kronecker product of 2D tensors A (m*n) and B (p*q):
+    """Return the Kronecker product of two 2-D square tensors.
 
-        kron(A, B) has shape (m*p, n*q)
+    Args:
+        A: Tensor of shape ``(m, n)``.
+        B: Tensor of shape ``(p, q)``.
+
+    Returns:
+        Kronecker product of shape ``(m*p, n*q)``.
+
+    Raises:
+        ValueError: If either input is not exactly 2-D.
     """
     if A.ndim != 2 or B.ndim != 2:
         raise ValueError(f"kron_2d expects 2D tensors, got {A.shape}, {B.shape}")
@@ -81,11 +114,23 @@ def kron_2d(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
 
 
 def make_traceless_maps(N: int, device=None, dtype=None):
-    """
-    Build linear maps Q and S for the traceless subspace:
+    """Build linear maps ``Q`` and ``S`` for the traceless subspace of ``M_N(C)``.
 
-      vec(A) = Q v,   A traceless, v ∈ C^{N^2-1}
-      v      = S vec(A), for traceless A.
+    The maps satisfy::
+
+        vec(A) = Q @ v   for any traceless A, where v ∈ C^{N²-1}
+        v = S @ vec(A)   for any traceless A
+
+    Here ``vec`` is the column-major vectorisation of an ``N×N`` matrix.
+
+    Args:
+        N: Matrix size.
+        device: PyTorch device (defaults to CPU).
+        dtype: PyTorch dtype (defaults to ``torch.complex64``).
+
+    Returns:
+        Tuple ``(Q, S)`` where ``Q`` has shape ``(N², N²-1)`` and
+        ``S`` has shape ``(N²-1, N²)``.
     """
     device = device or torch.device("cpu")
     dtype = dtype or torch.complex64
@@ -119,7 +164,19 @@ def make_traceless_maps(N: int, device=None, dtype=None):
 
 
 def get_traceless_maps_cached(N: int, device: torch.device, dtype: torch.dtype):
-    """Cache Q,S per (N, device, dtype) to avoid rebuilding every call."""
+    """Return cached ``(Q, S)`` traceless-subspace maps for the given configuration.
+
+    Calls :func:`make_traceless_maps` on the first invocation and caches the
+    result keyed on ``(N, device, dtype)`` to avoid redundant allocations.
+
+    Args:
+        N: Matrix size.
+        device: Target PyTorch device.
+        dtype: Target PyTorch dtype.
+
+    Returns:
+        Tuple ``(Q, S)`` — see :func:`make_traceless_maps`.
+    """
     key = (N, device.type, device.index, dtype)
     if key not in _traceless_cache:
         _traceless_cache[key] = make_traceless_maps(N, device=device, dtype=dtype)
@@ -131,7 +188,20 @@ _trace_diag_indices_cache: dict[tuple[int, str, Optional[int]], torch.Tensor] = 
 
 
 def get_trace_diag_indices_cached(N: int, device: torch.device) -> torch.Tensor:
-    """Cache flattened diagonal indices for vec(I) in column-major ordering."""
+    """Return cached flat indices of the diagonal entries in a column-major vectorised ``N×N`` matrix.
+
+    The diagonal positions in column-major (Fortran) order are
+    ``0, N+1, 2(N+1), ..., (N-1)(N+1)``, i.e. ``arange(0, N², N+1)``.
+    These are used to efficiently extract or modify the trace sector without
+    materialising a full ``N²×N²`` projector.
+
+    Args:
+        N: Matrix size.
+        device: Target PyTorch device.
+
+    Returns:
+        Long tensor of length ``N`` containing the flat diagonal indices.
+    """
     key = (N, device.type, device.index)
     diag_indices = _trace_diag_indices_cache.get(key)
     if diag_indices is None:
@@ -141,19 +211,38 @@ def get_trace_diag_indices_cached(N: int, device: torch.device) -> torch.Tensor:
 
 
 def add_trace_projector_inplace(block: torch.Tensor, N: int) -> None:
-    """
-    Add P = (1/N) |I><I| to an (N^2 x N^2) block without materializing dense P.
+    """Add the trace-mode projector ``P = (1/N) |vec(I)><vec(I)|`` to *block* in-place.
 
-    This lifts the trace-mode zero mode while touching only the N x N trace sub-block.
+    This lifts the zero mode associated with the identity direction of the
+    adjoint action without materialising the full ``N²×N²`` dense projector.
+    Only the ``N×N`` diagonal sub-block of *block* is modified.
+
+    Args:
+        block: Square matrix of shape ``(N², N²)`` to be modified in-place.
+        N: Matrix size; determines which entries correspond to the trace mode.
     """
     diag_indices = get_trace_diag_indices_cached(N, block.device)
     block[diag_indices.unsqueeze(-1), diag_indices] += block.new_tensor(1.0 / N)
 
 
 def get_trace_projector_cached(N: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-    """
-    Get cached projector onto the trace mode (identity matrix direction).
-    Returns P such that P @ vec(I) = vec(I) and P @ vec(A) = 0 for traceless A.
+    """Return the cached rank-1 projector onto the trace (identity-matrix) direction.
+
+    The returned matrix ``P`` satisfies::
+
+        P @ vec(I) = vec(I)
+        P @ vec(A) = 0   for traceless A
+
+    where ``vec`` is column-major vectorisation.  Result is cached per
+    ``(N, device, dtype)``.
+
+    Args:
+        N: Matrix size.
+        device: Target PyTorch device.
+        dtype: Target PyTorch dtype.
+
+    Returns:
+        Dense projector of shape ``(N², N²)``.
     """
     key = (N, device.type, device.index, dtype)
     if key not in _projector_cache:
@@ -171,7 +260,16 @@ def get_trace_projector_cached(N: int, device: torch.device, dtype: torch.dtype)
 
 
 def get_eye_cached(n: int, device: torch.device, dtype: torch.dtype):
-    """Cache identity matrices per (n, device, dtype)."""
+    """Return a cached ``n×n`` identity matrix for the given device and dtype.
+
+    Args:
+        n: Matrix size.
+        device: Target PyTorch device.
+        dtype: Target PyTorch dtype.
+
+    Returns:
+        Identity tensor of shape ``(n, n)``.
+    """
     key = (n, device.type, device.index, dtype)
     eye = _eye_cache.get(key)
     if eye is None:
@@ -181,7 +279,25 @@ def get_eye_cached(n: int, device: torch.device, dtype: torch.dtype):
 
 
 def get_hermitian_basis_indices_cached(N: int, device: torch.device) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Cache flat indices for diagonal and paired off-diagonal Hermitian basis elements."""
+    """Return cached flat index tensors for the Hermitian basis of ``M_N(C)``.
+
+    The Hermitian basis consists of:
+
+    * Diagonal elements (real).
+    * Paired upper-triangular and lower-triangular positions (complex conjugates).
+
+    These indices are used to efficiently project the adjoint-action super-operator
+    onto the real vector space of Hermitian matrices.
+
+    Args:
+        N: Matrix size.
+        device: Target PyTorch device.
+
+    Returns:
+        Tuple ``(diag, upper, lower)`` of long tensors containing the flat
+        (column-major) indices for diagonal entries, upper-triangular entries,
+        and their lower-triangular conjugates, respectively.
+    """
     key = (N, device.type, device.index)
     cached = _hermitian_basis_index_cache.get(key)
     if cached is None:
@@ -195,7 +311,20 @@ def get_hermitian_basis_indices_cached(N: int, device: torch.device) -> tuple[to
 
 
 def get_hermitian_diag_basis_change_cached(N: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-    """Cache the orthogonal change from diagonal units to identity-plus-Cartan generators."""
+    """Return the cached orthogonal basis-change matrix for the diagonal sector.
+
+    Transforms from the canonical diagonal-unit basis ``{E_{ii}}`` to the
+    orthonormal basis formed by the identity direction ``I/√N`` and the
+    ``N-1`` Cartan generators of ``su(N)``.
+
+    Args:
+        N: Matrix size.
+        device: Target PyTorch device.
+        dtype: Target PyTorch dtype.
+
+    Returns:
+        Orthogonal matrix of shape ``(N, N)``.
+    """
     key = (N, device.type, device.index, dtype)
     change = _hermitian_diag_basis_change_cache.get(key)
     if change is None:
@@ -213,18 +342,21 @@ def get_hermitian_diag_basis_change_cached(N: int, device: torch.device, dtype: 
 
 
 def ad_matrix(X: torch.Tensor) -> torch.Tensor:
-    """
-    Adjoint action ad_X on the full matrix space M_N(C).
+    """Construct the adjoint-action super-operator ``ad_X`` on the full matrix space ``M_N(C)``.
 
-    X: (..., N, N) with optional batch dimension.
+    For a vector ``v = vec(A)`` the result satisfies
+    ``(ad_X v) = vec([X, A])``.
+    Implemented as ``I⊗X - X^T⊗I`` via a single Kronecker-product construction,
+    avoiding redundant allocations.
+
+    Args:
+        X: Matrix of shape ``(N, N)`` or batched ``(B, N, N)``.
+
     Returns:
-        (..., N^2, N^2) such that
-        v' = ad_X v corresponds to [X, A] in the vectorized basis.
+        Super-operator of shape ``(N², N²)`` or ``(B, N², N²)``.
 
-    Computed as T - σ(T) where T = I⊗X and σ is the cyclic index permutation
-    (0,4,1,2,3) that maps T to X^T⊗I in the 4-tensor representation.  This
-    makes the anti-symmetric structure manifest while requiring only one
-    Kronecker-product evaluation.
+    Raises:
+        ValueError: If ``X`` does not have 2 or 3 dimensions.
     """
     if X.ndim not in (2, 3):
         raise ValueError(f"ad_matrix expects X with shape (N,N) or (B,N,N), got {X.shape}")
@@ -251,23 +383,37 @@ def ad_matrix(X: torch.Tensor) -> torch.Tensor:
 
 
 def ad_matrix_real_antisymmetric(X: torch.Tensor, *, traceless: bool = False) -> torch.Tensor:
-    """
-    Represent ``i ad_X`` on the real vector space of Hermitian matrices.
+    """Represent ``i ad_X`` on the real vector space of Hermitian matrices.
 
-    Basis order:
-      1. ``I / sqrt(N)``
-      2. the ``N-1`` diagonal Cartan generators
-      3. ``(E_ij + E_ji) / sqrt(2)`` for ``i < j``
-      4. ``i (E_ij - E_ji) / sqrt(2)`` for ``i < j``
+    The Hermitian basis is ordered as:
 
-    For Hermitian ``X``, the returned matrix is real and anti-symmetric.  The
-    identity direction is the first basis vector, so ``traceless=True`` drops
-    that row and column and returns the ``su(N)`` block directly.
+    1. ``I / sqrt(N)`` — the identity (trace) direction.
+    2. The ``N-1`` diagonal Cartan generators.
+    3. ``(E_ij + E_ji) / sqrt(2)`` for ``i < j`` — symmetric off-diagonal.
+    4. ``i (E_ij - E_ji) / sqrt(2)`` for ``i < j`` — antisymmetric off-diagonal.
 
-    The implementation keeps the same asymptotic cost as ``ad_matrix``: it
-    reuses the fast Kronecker-form construction for ``i ad_X`` and applies only
-    sparse pair-combinations plus a dense ``N x N`` rotation in the diagonal
-    sector, rather than a dense ``N^2 x N^2`` similarity transform.
+    For Hermitian ``X`` the returned matrix is real and anti-symmetric, making
+    it suitable as the generator of a unitary rotation.  The identity direction
+    is the first basis vector, so passing ``traceless=True`` drops that row and
+    column to give the ``su(N)`` block directly.
+
+    The implementation reuses :func:`ad_matrix` for the Kronecker-product
+    construction and applies sparse pair-combinations plus a dense ``N x N``
+    diagonal-sector rotation, achieving the same asymptotic cost as a plain
+    ``N^2 x N^2`` similarity transform but with fewer allocations.
+
+    Args:
+        X: Hermitian matrix of shape ``(N, N)`` or batched ``(B, N, N)``.
+        traceless: If ``True``, drop the identity-direction row/column and
+            return the ``(N²-1) x (N²-1)`` ``su(N)`` block.
+
+    Returns:
+        Real anti-symmetric matrix of shape ``(N², N²)`` or ``(B, N², N²)``
+        (or the ``su(N)`` block of shape ``(N²-1, N²-1)`` when
+        ``traceless=True``).
+
+    Raises:
+        ValueError: If ``X`` does not have 2 or 3 dimensions.
     """
     if X.ndim not in (2, 3):
         raise ValueError(
@@ -337,12 +483,31 @@ def ad_matrix_real_antisymmetric(X: torch.Tensor, *, traceless: bool = False) ->
 
 
 def makeH(mat: torch.Tensor) -> torch.Tensor:
-    """Project a matrix (or batch of matrices) to its Hermitian part."""
+    """Project a matrix (or batch thereof) onto its Hermitian part ``(A + A†) / 2``.
+
+    Args:
+        mat: Input tensor of shape ``(..., n, n)``.
+
+    Returns:
+        Hermitian projection of the same shape.
+    """
     return 0.5 * (mat + dagger(mat))
 
 
 def spinJMatrices(j_val: float):
-    """Generate spin-j angular momentum matrices Jx, Jy, Jz on CPU with NumPy."""
+    """Generate the spin-``j`` angular-momentum matrices ``Jx``, ``Jy``, ``Jz``.
+
+    Constructed in the standard basis of descending ``m`` values using the
+    ladder-operator conventions, and verified to satisfy the
+    ``[Ji, Jj] = i ε_ijk Jk`` algebra.
+
+    Args:
+        j_val: Spin quantum number (e.g. ``0.5``, ``1``, ``1.5``, ...).
+
+    Returns:
+        NumPy array of shape ``(3, 2j+1, 2j+1)`` with entries
+        ``[Jx, Jy, Jz]``, dtype ``complex128``, computed on CPU.
+    """
     dim = int(round(2 * j_val + 1))
 
     Jp = np.zeros((dim, dim), dtype=np.complex128)

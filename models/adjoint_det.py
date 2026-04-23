@@ -31,7 +31,29 @@ def build_model(args):
 
 
 class AdjointDetModel(MatrixModel):
-    """Matrix model with product fermion determinant det(1 + i sum_i ad_{\sqrt{X^2}})."""
+    r"""Matrix model whose fermion sector is ``det(1 + i \sum_i \mathrm{ad}_{\sqrt{X^2}})``.
+
+    The action combines a Yang-Mills bosonic term with a simplified fermionic
+    determinant that avoids the full Pfaffian computation:
+
+    .. math::
+
+        S = \frac{N}{g} \left[ \mathrm{Tr}({\sum_i X_i^2})
+            - \frac{1}{2} \sum_{i<j} \mathrm{Tr}([X_i, X_j]^2) \right]
+            - c \cdot (D-2) \sum_{a<b} \log\!\left(1 + (\mu_a - \mu_b)^2\right)
+
+    where ``\mu_a`` are the eigenvalues of ``\sqrt{\sum_i X_i^2}``, ``D = nmat``
+    is the dimension, and ``c`` is *det_coeff*.
+
+    Args:
+        dim: Number of matrices ``D``.
+        ncol: Matrix size ``N``.
+        couplings: List of couplings; ``couplings[0]`` is ``g``.
+        source: Optional external source (see
+            :func:`~matrix_hmc.models.utils.parse_source`).
+        det_coeff: Coefficient *c* in front of the fermionic log-det.
+            Default ``0.5``.
+    """
 
     model_name = model_name
 
@@ -44,7 +66,7 @@ class AdjointDetModel(MatrixModel):
         self.is_hermitian = True
         self.is_traceless = True
 
-    def load_fresh(self, args):
+    def load_fresh(self):
         # X = torch.zeros((self.nmat, self.ncol, self.ncol), dtype=config.dtype, device=config.device)
         X = 0.01 * random_hermitian(self.ncol, traceless=self.is_traceless, batchsize=self.nmat)
         if self.source is not None:
@@ -52,8 +74,7 @@ class AdjointDetModel(MatrixModel):
         self.set_state(X)
 
     def _fermion_det(self, X: torch.Tensor) -> torch.Tensor:
-        """Return log|det(1 + i sum_i ad_{\sqrt{X^2}})|.
-        """
+        r"""Return log|det(1 + i sum_i ad_{\sqrt{X^2}})|."""
         sum_X2 = (X @ X).sum(dim=0)
         eigvals = torch.sqrt(torch.linalg.eigvalsh(sum_X2).real.to(dtype=config.real_dtype))
         N = eigvals.shape[0]

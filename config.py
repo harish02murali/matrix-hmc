@@ -52,7 +52,24 @@ def configure_threads(
     num_threads: int | None = None,
     num_interop_threads: int | None = None,
 ) -> tuple[int, int]:
-    """Apply explicit CPU threading policy for PyTorch."""
+    """Configure the number of CPU threads used by PyTorch.
+
+    When arguments are ``None``, the values already stored in
+    :data:`CPU_NUM_THREADS` / :data:`CPU_NUM_INTEROP_THREADS` (which are
+    themselves read from the ``IKKT_NUM_THREADS`` / ``IKKT_NUM_INTEROP_THREADS``
+    environment variables at import time) are used instead.
+
+    Args:
+        num_threads: Number of intra-op CPU threads.  Passed to
+            :func:`torch.set_num_threads`.
+        num_interop_threads: Number of inter-op CPU threads.  Passed to
+            :func:`torch.set_num_interop_threads`.  Silently ignored if PyTorch
+            has already started its thread pool.
+
+    Returns:
+        Tuple ``(intra_threads, inter_threads)`` reflecting the values that
+        were actually applied.
+    """
     global CPU_NUM_THREADS, CPU_NUM_INTEROP_THREADS
 
     resolved_threads = CPU_NUM_THREADS if num_threads is None else num_threads
@@ -131,10 +148,38 @@ def configure_dtype(precision: str = "complex64") -> torch.dtype:
 device = torch.device("cpu")
 
 
+def configure(
+    device: str = "auto",
+    precision: str = "complex64",
+    threads: int | None = None,
+    interop_threads: int | None = None,
+) -> None:
+    """One-shot convenience function to configure device, dtype, and threading.
+
+    Calls :func:`configure_threads`, :func:`configure_device`, and
+    :func:`configure_dtype` in that order.  Suitable for use at the top of a
+    script or notebook before constructing any model.
+
+    Args:
+        device: Compute device — ``'auto'`` (GPU when available, else CPU),
+            ``'cpu'``, or ``'gpu'`` (CUDA required).
+        precision: Floating-point precision — ``'complex64'`` (single, faster)
+            or ``'complex128'`` (double, more accurate).
+        threads: Intra-op CPU thread count; ``None`` uses the environment
+            variable ``IKKT_NUM_THREADS`` or PyTorch's default.
+        interop_threads: Inter-op CPU thread count; ``None`` uses
+            ``IKKT_NUM_INTEROP_THREADS`` or PyTorch's default.
+    """
+    configure_threads(threads, interop_threads)
+    configure_device(device)
+    configure_dtype(precision)
+
+
 __all__ = [
     "ALLOW_TF32",
     "CPU_NUM_INTEROP_THREADS",
     "CPU_NUM_THREADS",
+    "configure",
     "configure_threads",
     "configure_device",
     "configure_dtype",

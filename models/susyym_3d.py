@@ -39,7 +39,29 @@ def build_model(args):
 
 
 class SUSYYM3DModel(MatrixModel):
-	"""3D supersymmetric Yang-Mills-inspired matrix model with massive adjoint fermions."""
+	"""3D supersymmetric Yang-Mills-inspired matrix model with massive adjoint fermions.
+
+	The action is:
+
+	.. math::
+
+		S = \\frac{N}{g} \\left[ m_B \\mathrm{Tr}(\\sum_i X_i^2)
+			- \\frac{1}{2} \\sum_{i<j} \\mathrm{Tr}([X_i, X_j]^2) \\right]
+			- \\frac{1}{2} \\log |\\det M_F(X)|
+
+	where ``M_F`` is the adjoint-representation Dirac operator for 3 matrices,
+	``m_B`` is the boson mass, and ``m_F`` is the fermion mass that deforms the
+	off-diagonal blocks of ``M_F``.
+
+	Args:
+		ncol: Matrix size ``N``.
+		couplings: List of couplings; ``couplings[0]`` is the 't Hooft
+			coupling ``g``.
+		source: Optional external source (see
+			:func:`~matrix_hmc.models.utils.parse_source`).
+		fermion_mass: Mass parameter for the fermion matrix. Default ``1.0``.
+		boson_mass: Coefficient of the quadratic bosonic term. Default ``1.0``.
+	"""
 
 	model_name = model_name
 
@@ -60,7 +82,7 @@ class SUSYYM3DModel(MatrixModel):
 		self.is_hermitian = True
 		self.is_traceless = True
 
-	def load_fresh(self, args):
+	def load_fresh(self):
 		X = 0.01 * random_hermitian(self.ncol, traceless=self.is_traceless, batchsize=self.nmat)
 		if self.source is not None:
 			X = self.source / 2

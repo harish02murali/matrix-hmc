@@ -23,11 +23,34 @@ def build_model(args):
         source=args.source,
         massless=getattr(args, "massless", False),
         pfaffian_every=getattr(args, "pfaffian_every", 1),
+        spin=getattr(args, "spin", None),
     )
 
 
 class PIKKT10DModel(MatrixModel):
-    """10D polarized IKKT model with Omega fixed to 1."""
+    """10D polarized IKKT model with ``Ω = 1`` and a full fermionic Pfaffian.
+
+    Uses 10 bosonic ``N×N`` Hermitian traceless matrices.  The fermionic
+    contribution is the Pfaffian of the 16N²-dimensional Dirac operator built
+    from the 10D Gamma matrices.  The Pfaffian is computed via
+    :func:`~matrix_hmc.pfaffian.slogpfaff` and is evaluated every
+    *pfaffian_every* HMC steps for efficiency.
+
+    A fuzzy-sphere (Myers-term) initial configuration can be loaded by passing
+    a half-integer or integer *spin* value.
+
+    Args:
+        ncol: Matrix size ``N``.
+        couplings: List of couplings; ``couplings[0]`` is the 't Hooft
+            coupling ``g``.
+        source: Optional external source (see
+            :func:`~matrix_hmc.models.utils.parse_source`).
+        massless: If ``True``, drop the mass (quadratic) terms. Default ``False``.
+        pfaffian_every: Recompute the Pfaffian contribution to the potential
+            every this many HMC trajectories. Default ``1`` (every step).
+        spin: If not ``None``, initialise the first three matrices to a
+            fuzzy-sphere background built from spin-``j`` matrices.
+    """
 
     model_name = model_name
 
@@ -38,6 +61,7 @@ class PIKKT10DModel(MatrixModel):
         source: np.ndarray | None = None,
         massless: bool = False,
         pfaffian_every: int = 1,
+        spin: float | None = None,
     ) -> None:
         super().__init__(nmat=10, ncol=ncol)
         self.couplings = couplings
@@ -45,6 +69,7 @@ class PIKKT10DModel(MatrixModel):
         self.omega = 1.0
         self.massless = massless
         self.pfaffian_every = int(pfaffian_every)
+        self.spin = spin
         self._measure_calls = 0
         self.source = parse_source(source, self.nmat, config.device, config.dtype)
         self.is_hermitian = True
@@ -94,12 +119,12 @@ class PIKKT10DModel(MatrixModel):
 
         return gb, gb123, G
 
-    def load_fresh(self, args):
+    def load_fresh(self):
         scale = float(np.sqrt(self.g / self.ncol))
         X = scale * random_hermitian(self.ncol, batchsize=self.nmat)
 
-        if args.spin is not None:
-            J_matrices = torch.from_numpy(spinJMatrices(args.spin)).to(
+        if self.spin is not None:
+            J_matrices = torch.from_numpy(spinJMatrices(self.spin)).to(
                 dtype=config.dtype, device=config.device
             )
             ntimes = self.ncol // J_matrices.shape[1]
@@ -113,6 +138,20 @@ class PIKKT10DModel(MatrixModel):
         self.set_state(X)
 
     def fermion_determinant(self, X: torch.Tensor | None = None) -> torch.Tensor:
+        """Compute ``-0.5 * log|det M_F(X)|`` for the fermionic contribution to the action.
+
+        The fermion matrix ``M_F`` is constructed in the ``(16 N²)``-dimensional
+        adjoint representation using the precomputed 10D Gamma matrices.  Zero
+        modes from the trace sector are lifted by adding a rank-1 projector to
+        each diagonal ``N²×N²`` block before taking the log-determinant.
+
+        Args:
+            X: Configuration tensor of shape ``(10, N, N)``.  Defaults to the
+                current internal state.
+
+        Returns:
+            Scalar real-valued tensor equal to ``-0.5 * log|det M_F|``.
+        """
         X = self._resolve_X(X)
         N2 = self.ncol ** 2
 
@@ -146,14 +185,39 @@ class PIKKT10DModel(MatrixModel):
         # return torch.tensor([slogdet[0], -0.5 * slogdet[1]])
     
     def fermion_pfaffian(self, X: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
-        # for massless, \text{Pf}(\frac{i}2 \bar\gamma^I \otimes \mathbf{X_I})
-        # for massive, \text{Pf}\left(\frac{i}2 \bar\gamma^I \otimes \mathbf{X_I} + \frac i8 \bar\gamma^{123} \otimes \mathbf{1}\right)
+        """Return ``(sign, log|pf(M_F)|)`` for the full fermionic Pfaffian.
+
+        Delegates to :func:`~matrix_hmc.pfaffian.slogpfaff` on the
+        ``(16(N²-1))``-dimensional real antisymmetric fermion matrix built via
+        :meth:`fermion_matrix`.
+
+        Args:
+            X: Configuration tensor of shape ``(10, N, N)``.  Defaults to the
+                current internal state.
+
+        Returns:
+            Tuple ``(sign, log_abs)`` — see :func:`~matrix_hmc.pfaffian.slogpfaff`.
+        """
         M = self.fermion_matrix(X)
         return slogpfaff(M)
 
-    def fermion_matrix(self, X: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
-        # for massless, \text{Pf}(\frac{i}2 \bar\gamma^I \otimes \mathbf{X_I})
-        # for massive, \text{Pf}\left(\frac{i}2 \bar\gamma^I \otimes \mathbf{X_I} + \frac i8 \bar\gamma^{123} \otimes \mathbf{1}\right)
+    def fermion_matrix(self, X: torch.Tensor | None = None) -> torch.Tensor:
+        """Build the ``(16(N²-1))``-dimensional skew-symmetric fermion matrix.
+
+        Constructs ``M_F`` in the real antisymmetric basis of ``su(N)`` using
+        :func:`~matrix_hmc.algebra.ad_matrix_real_antisymmetric`.
+
+        * **Massless**: ``M = (i/2) sum_I gamma_bar^I ⊗ ad_{X_I}``.
+        * **Massive** (pIKKT): adds a constant block
+          ``(i/8) gamma_bar^{123} ⊗ 1``.
+
+        Args:
+            X: Configuration tensor of shape ``(10, N, N)``.  Defaults to the
+                current internal state.
+
+        Returns:
+            Skew-symmetric tensor of shape ``(16(N²-1), 16(N²-1))``.
+        """
         X = self._resolve_X(X)
         N2 = self.ncol ** 2 - 1
 
@@ -172,6 +236,19 @@ class PIKKT10DModel(MatrixModel):
         return M
 
     def bosonic_potential(self, X: torch.Tensor | None = None) -> torch.Tensor:
+        """Compute the purely bosonic part of the potential ``V_bos(X)``.
+
+        Combines the Yang-Mills commutator term with anisotropic mass terms
+        (weighted by precomputed coefficients) and, if not massless, a
+        Myers/cubic term ``(i/3) ε^{ijk} Tr(X_i X_j X_k)`` for ``i,j,k ∈ {1,2,3}``.
+
+        Args:
+            X: Configuration tensor of shape ``(10, N, N)``.  Defaults to the
+                current internal state.
+
+        Returns:
+            Scalar real-valued tensor ``(N/g) * V_bos``.
+        """
         X = self._resolve_X(X)
 
         bos = -0.5 * _commutator_action_sum(X)

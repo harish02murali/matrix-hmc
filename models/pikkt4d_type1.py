@@ -106,7 +106,30 @@ def _type1_massless_staudacher(X: torch.Tensor) -> torch.Tensor:
 
 
 class PIKKTTypeIModel(MatrixModel):
-    """Type I polarized IKKT model definition."""
+    """Type I polarized IKKT model with 4 bosonic matrices and a fermionic determinant.
+
+    The action consists of a bosonic Yang-Mills term and the logarithm of a
+    fermionic determinant derived from the Type-I superstring matrix model:
+
+    .. math::
+
+        S = \\frac{N}{g} \\left[ \\mathrm{Tr}(X_i^2)
+            - \\frac{1}{2} \\sum_{i<j} \\mathrm{Tr}([X_i, X_j]^2) \\right]
+            - \\frac{1}{2} \\log |\\det M_F(X)|
+
+    where ``M_F`` encodes the adjoint-action Dirac operator for 4 matrices and
+    the ``\\eta`` parameter controls the constant (mass) sector.
+
+    Args:
+        ncol: Matrix size ``N``.
+        couplings: List of couplings; ``couplings[0]`` is the 't Hooft
+            coupling ``g``.
+        source: Optional external source (see
+            :func:`~matrix_hmc.models.utils.parse_source`).
+        eta: Rescaling factor for the constant fermion block. Default ``1.0``.
+        massless: If ``True``, use the massless Krauth-Staudacher formula
+            (zero quadratic term). Default ``False``.
+    """
 
     model_name = model_name
 
@@ -136,7 +159,7 @@ class PIKKTTypeIModel(MatrixModel):
 
         self._log_det_fn = base_fn
 
-    def load_fresh(self, args):
+    def load_fresh(self):
         X = 0.01 * random_hermitian(self.ncol, batchsize=self.nmat)
         self.set_state(X)
 

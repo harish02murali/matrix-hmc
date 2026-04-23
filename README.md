@@ -1,161 +1,324 @@
-# MatrixModelHMC_pytorch
+# matrix-hmc
 
-PyTorch implementation of Hybrid Monte Carlo (HMC) for several matrix models, including polarized IKKT variants.  
-The code is model-driven: each file in `models/` defines one model via `build_model(args)`, while `hmc.py` and `main.py` provide shared integrator + I/O logic.
+PyTorch implementation of Hybrid Monte Carlo (HMC) for polarized IKKT-like matrix models.
 
-## Requirements
-
-- Python `>=3.9`
-- `torch`
-- `numpy`
-
-Install in editable mode:
+## Installation
 
 ```bash
 pip install -e .
 ```
 
-## Available Models
-**Four dimensional Models**
+Requires Python ≥ 3.9, `torch`, and `numpy`.
 
-Type I, $SO(4)$ invariant, with coupling constant $g$ and optional fermion deformation parameter $\eta$:
+---
 
-$$
-S_{D=4,\text{type I}}=\frac{1}{g}\text{Tr}\Bigl[-\frac14 [X_I,X_J]^2 -\frac{i}{2}\bar\psi \Gamma^I [X_I,\psi] + X_I^2 + \eta\,\bar\psi\psi \Bigr]
-$$
+## Quick start
 
-Type II, $SO(3)$ invariant, two coupling constants $g$ and $\omega$:
+### As a library
 
-$$
-\begin{aligned}
-S_{D=4,\text{type II}}=\frac{1}{g}\text{Tr}\Bigl[&-\frac14 [X_I,X_J]^2 -\frac{i}{2}\bar\psi \Gamma^I [X_I,\psi] + i \frac{2}{3}(1+\omega) \epsilon_{ijk} X_i X_j X_k \\
-&+ \frac{1}{3}\left(\omega + \frac{2}{3}\right) X_i X_i + \frac{\omega}{3} X_4^2 - \frac{1}{3} \bar\psi \Gamma^{123} \psi \Bigr]
-\end{aligned}
-$$
+```python
+import matrix_hmc as hmc
+from matrix_hmc.models.pikkt10d import PIKKT10DModel
 
-In addition to these two, the repository includes a one-matrix model with polynomial potential, 10D bosonic pIKKT model, a variable-dimension Yang-Mills model, and an adjoint determinant model. Each has its own coupling structure and optional flags as described below.
+hmc.configure(device="auto", precision="complex64")
 
-Model selection is dynamic: `--model <name>` loads `models/<name>.py`.
+model = PIKKT10DModel(ncol=20, couplings=[0.1], spin=0, pfaffian_every=1)
 
-- `pikkt4d_type1`
-  - Fixed `D=4`
-  - Couplings: `--coupling g`
-  - Extra flag: `--eta` (default `1.0`)
-- `pikkt4d_type2`
-  - Fixed `D=4`
-  - Couplings: `--coupling g omega`
-  - Extra flags: `--spin`, `--bosonic`, `--lorentzian`
-- `pikkt10d`
-  - Fixed `D=10`
-  - Couplings: `--coupling g`
-  - Current implementation uses the bosonic sector with `Omega=1`; fermion determinant is a placeholder returning `0`
-- `yangmills`
-  - Variable dimension
-  - Requires `--nmat D`
-  - Couplings: `--coupling g`
-- `adjoint_det`
-  - Variable dimension
-  - Requires `--nmat D`
-  - Couplings: `--coupling g`
-- `susyym_3d`
-  - Fixed `D=3`
-  - Couplings: `--coupling g`
-  - Extra flag: `--fermion-mass` (default `1.0`)
-- `1mm`
-  - Single-matrix polynomial model
-  - Couplings: `--coupling t1 [t2 ...]`
-
-## Running
-
-Basic Type I run:
-
-```bash
-python main.py --model pikkt4d_type1 --ncol 10 --niters 300 --coupling 100.0 --eta 1.0 --name runA --data-path outputs
+hmc.run(
+    model,
+    niters=500,
+    step_size=0.07,
+    nsteps=150,
+    output="data",
+    name="triv",
+)
 ```
 
-Type II run:
+### As a CLI
 
 ```bash
-python main.py --model pikkt4d_type2 --ncol 10 --niters 300 --coupling 100.0 1.0 --name runB --data-path outputs
+matrix-hmc --model pikkt10d --ncol 20 --coupling 0.1 \
+           --step-size 0.07 --nsteps 150 --niters 500 \
+           --name triv --data-path data --spin 0 --pfaffian-every 1
 ```
 
-10D pIKKT run:
+---
+
+## Models
+
+### `pikkt4d_type1` — Type I polarized IKKT, *SO*(4) invariant
+
+$$S = \frac{N}{g}\operatorname{Tr}\!\Bigl[-\tfrac{1}{4}[X_I,X_J]^2 - \tfrac{i}{2}\bar\psi\,\Gamma^I[X_I,\psi] + X_I^2 + \eta\,\bar\psi\psi\Bigr]$$
+
+- Fixed $D=4$, coupling `g`, optional deformation `eta` (default 1.0)
+- Flags: `--eta`, `--massless` (drops $X^2$ and Myers terms)
+
+```python
+from matrix_hmc.models.pikkt4d_type1 import PIKKTTypeIModel
+
+model = PIKKTTypeIModel(ncol=50, couplings=[150.0], eta=1.0)
+model = PIKKTTypeIModel(ncol=30, couplings=[1.0], massless=True)
+```
+
+### `pikkt4d_type2` — Type II polarized IKKT, *SO*(3) invariant
+
+$$S = \frac{N}{g}\operatorname{Tr}\!\Bigl[-\tfrac{1}{4}[X_I,X_J]^2 - \tfrac{i}{2}\bar\psi\,\Gamma^I[X_I,\psi] + \tfrac{i(2+2\omega)}{3}\epsilon_{ijk}X_iX_jX_k + \cdots\Bigr]$$
+
+- Fixed $D=4$, couplings `g` and `omega`
+- Flags: `--spin` (fuzzy-sphere initial condition), `--bosonic`, `--lorentzian`
+
+```python
+from matrix_hmc.models.pikkt4d_type2 import PIKKTTypeIIModel
+
+model = PIKKTTypeIIModel(ncol=48, couplings=[0.1, 1.0], spin=0)
+model = PIKKTTypeIIModel(ncol=48, couplings=[10.0, 1.0], spin=1)
+```
+
+### `pikkt10d` — 10D polarized IKKT
+
+- Fixed $D=10$, single coupling `g`, $\Omega=1$
+- Flags: `--massless`, `--pfaffian-every K` (measure Pfaffian every K trajectories), `--spin`
+
+```python
+from matrix_hmc.models.pikkt10d import PIKKT10DModel
+
+model = PIKKT10DModel(ncol=20, couplings=[0.1], spin=0, pfaffian_every=1)
+```
+
+### `yangmills` — $D$-dimensional Yang-Mills
+
+- Variable dimension, requires `--nmat D`
+- Single coupling `g`, optional mass term `--mass`
+
+```python
+from matrix_hmc.models.yangmills import YangMillsModel
+
+model = YangMillsModel(dim=4, ncol=50, couplings=[150.0])
+```
+
+### `adjoint_det` — Adjoint determinant model
+
+- Variable dimension, requires `--nmat D`
+
+```python
+from matrix_hmc.models.adjoint_det import AdjointDetModel
+
+model = AdjointDetModel(dim=6, ncol=40, couplings=[50.0])
+```
+
+### `susyym_3d` — 3D SUSY Yang-Mills with massive adjoint fermions
+
+- Fixed $D=3$, flags: `--fermion-mass`, `--boson-mass`
+
+```python
+from matrix_hmc.models.susyym_3d import SUSYYM3DModel
+
+model = SUSYYM3DModel(ncol=12, couplings=[60.0], fermion_mass=1.0)
+```
+
+### `1mm` — Single-matrix polynomial model
+
+$$V(X) = \sum_n t_n \operatorname{Tr}(X^n)$$
+
+- Couplings `t1 t2 ...` set the polynomial coefficients
+
+```python
+import importlib
+mm = importlib.import_module("matrix_hmc.models.1mm")
+model = mm.OneMatrixPolynomialModel(ncol=50, couplings=[1.0, -0.5])
+```
+
+---
+
+## `hmc.run()` reference
+
+```python
+hmc.run(
+    model,                    # MatrixModel instance
+    niters=100,               # HMC trajectories
+    step_size=0.5,            # total leapfrog length (dt = step_size / nsteps)
+    nsteps=50,                # leapfrog steps per trajectory
+    output="data",            # root directory for output files
+    name="run",               # subdirectory prefix
+    save_every=10,            # flush observables every K trajectories
+    save_checkpoints=True,    # write checkpoint.pt every save_every steps
+    save_matrices=False,      # also dump raw matrix snapshots
+    resume=False,             # append to existing output, load checkpoint
+    force=False,              # overwrite existing output files
+    seed=None,                # RNG seed for reproducibility
+    profile=False,            # print cProfile top-10 at the end
+    dry_run=False,            # print config and return without running
+)
+```
+
+## `hmc.configure()` reference
+
+```python
+hmc.configure(
+    device="auto",        # "auto" | "cpu" | "gpu"
+    precision="complex64",# "complex64" | "complex128"
+    threads=None,         # PyTorch intra-op CPU threads
+    interop_threads=None, # PyTorch inter-op CPU threads
+)
+```
+
+---
+
+## Adding a custom model
+
+Create any `.py` file that defines a `MatrixModel` subclass and a `build_model(args)` factory:
+
+```python
+# my_model.py
+from matrix_hmc.models.base import MatrixModel
+import matrix_hmc.config as cfg
+import torch
+
+model_name = "my_model"
+
+class MyModel(MatrixModel):
+    def __init__(self, ncol, couplings):
+        super().__init__(nmat=3, ncol=ncol)
+        self.couplings = couplings
+        self.g = couplings[0]
+        self.is_hermitian = True
+        self.is_traceless = True
+
+    def load_fresh(self):
+        self.set_state(torch.zeros(self.nmat, self.ncol, self.ncol,
+                                   dtype=cfg.dtype, device=cfg.device))
+
+    def potential(self, X=None):
+        X = self._resolve_X(X)
+        return self.g * torch.einsum("bij,bji->", X, X).real
+
+    def measure_observables(self, X=None):
+        X = self._resolve_X(X)
+        eigs = [torch.linalg.eigvalsh(X[i]).real for i in range(self.nmat)]
+        return eigs, None
+
+def build_model(args):
+    return MyModel(ncol=args.ncol, couplings=args.coupling)
+```
+
+### Use from Python
+
+```python
+import matrix_hmc as hmc
+from my_model import MyModel
+
+hmc.configure(device="cpu", precision="complex64")
+model = MyModel(ncol=10, couplings=[1.0])
+hmc.run(model, niters=100, step_size=0.3, nsteps=50, output="data", name="test")
+```
+
+### Use from the CLI
 
 ```bash
-python main.py --model pikkt10d --ncol 10 --niters 300 --coupling 0.1 --step-size 0.1 --nsteps 300 --name run10d --data-path outputs
+matrix-hmc --model ./my_model.py --ncol 10 --coupling 1.0 --niters 100
 ```
 
-Yang-Mills in `D=6`:
+`--model` accepts a built-in name **or** a path to any `.py` file (relative or absolute).
+
+---
+
+## CLI reference
 
 ```bash
-python main.py --model yangmills --nmat 6 --ncol 12 --niters 200 --coupling 50.0 --name ymRun --data-path outputs
+matrix-hmc --model <name|path>   # required
+  --ncol N                       # matrix size
+  --nmat D                       # number of matrices (variable-D models)
+  --coupling g [omega ...]        # coupling constant(s)
+  --niters K                     # HMC trajectories
+  --step-size s --nsteps n       # leapfrog: dt = s/n
+  --device auto|cpu|gpu
+  --precision complex64|complex128
+  --name NAME --data-path DIR    # output location
+  --save / --no-save             # write checkpoint every --save-every steps
+  --save-every K
+  --saveAllMats                  # also dump raw matrix snapshots
+  --resume                       # load checkpoint and append to existing output
+  --fresh                        # ignore checkpoint even if --resume is set
+  --force                        # overwrite existing output files
+  --source "np.linspace(-1,1,N)" # external source term
+  --seed S                       # RNG seed
+  --threads T --interop-threads T
+  --dry-run                      # print config, do not run
+  --list-models                  # show built-in models
+  --generate-config              # print sample YAML config for --model
+  --config FILE                  # load YAML/TOML/JSON config (CLI overrides)
 ```
 
-Adjoint determinant model:
+Model-specific flags:
 
-```bash
-python main.py --model adjoint_det --nmat 6 --ncol 12 --niters 200 --coupling 50.0 --name adRun --data-path outputs
-```
+| Flag | Models |
+|------|--------|
+| `--eta` | `pikkt4d_type1` |
+| `--massless` | `pikkt4d_type1`, `pikkt10d` |
+| `--spin` | `pikkt4d_type2`, `pikkt10d` |
+| `--bosonic` | `pikkt4d_type2` |
+| `--lorentzian` | `pikkt4d_type2` |
+| `--pfaffian-every K` | `pikkt10d` |
+| `--mass` | `yangmills` |
+| `--fermion-mass`, `--boson-mass` | `susyym_3d` |
+| `--det-coeff` | `adjoint_det` |
 
-3D SUSY Yang-Mills-inspired model:
+Environment variables:
 
-```bash
-python main.py --model susyym_3d --ncol 12 --niters 300 --coupling 60.0 --fermion-mass 1.0 --name susy3d --data-path outputs
-```
+| Variable | Effect |
+|----------|--------|
+| `IKKT_NUM_THREADS` | Default PyTorch intra-op thread count |
+| `IKKT_NUM_INTEROP_THREADS` | Default PyTorch inter-op thread count |
 
-Resume a run (same model/name/path configuration):
-
-```bash
-python main.py --model pikkt4d_type2 --coupling 100.0 1.0 --resume --name runB --data-path outputs
-```
-
-Dry-run config check (no trajectories):
-
-```bash
-python main.py --model pikkt10d --ncol 10 --coupling 0.1 --dry-run --data-path outputs
-```
-
-## CLI Notes
-
-Important flags:
-
-- `--model`: required model name.
-- `--ncol`: matrix size `N`.
-- `--coupling`: model-dependent couplings.
-- `--niters`: number of trajectories.
-- `--step-size`, `--nsteps`: leapfrog controls (`dt = step-size / nsteps`).
-- `--no-gpu`: force CPU even if CUDA is available.
-- `--complex64`: switch from complex128/float64 to complex64/float32.
-- `--compile`, `--no-compile`: control `torch.compile` explicitly (default is off unless `IKKT_COMPILE=1` is set).
-- `--threads`, `--interop-threads`: set PyTorch CPU intra-op and inter-op thread counts.
-- `--resume`: load checkpoint if present.
-- `--fresh`: ignore checkpoint and initialize a fresh configuration.
-- `--save`: write checkpoint every `--save-every` iterations.
-- `--saveAllMats`: dump raw matrix snapshots in chunked `.npy` files.
-- `--force`: overwrite existing observable files.
-- `--source`: optional source vector expression, e.g. `--source "np.linspace(-1,1,10)"`.
-- `--eta`: Type I fermion deformation parameter (`--model pikkt4d_type1` only, default `1.0`).
-
-Environment overrides:
-
-- `IKKT_COMPILE=1`: enable `torch.compile` by default.
-- `IKKT_NUM_THREADS=<n>`: default CPU intra-op threads.
-- `IKKT_NUM_INTEROP_THREADS=<n>`: default CPU inter-op threads.
+---
 
 ## Outputs
 
-Each run writes into a model-specific directory under `--data-path`, with:
+Each run writes into `<data-path>/<name>_<model>_D<nmat>_N<ncol>/`:
 
-- `evals.npz`: accumulated eigenvalue measurements
-- `corrs.npz`: accumulated correlator measurements
-- `metadata.json`: run + model metadata
-- `checkpoint.pt`: last saved configuration (only if `--save` is used)
-- `all_mats/` (optional): chunked raw matrix snapshots when `--saveAllMats` is enabled
+| File | Contents |
+|------|----------|
+| `evals.npz` | Eigenvalue measurements (key `"values"`, shape `[niters, nmat, ncol]`) |
+| `corrs.npz` | Correlator measurements (key `"values"`) |
+| `metadata.json` | Model + run parameters |
+| `checkpoint.pt` | Last saved configuration (if `--save`) |
+| `all_mats/` | Chunked raw matrix snapshots (if `--saveAllMats`) |
 
-## Repository Layout
+Load observables:
 
-- `main.py`: orchestration, model loading, trajectory loop, output handling
-- `cli.py`: argument parsing + validation
-- `hmc.py`: leapfrog + Metropolis accept/reject
-- `algebra.py`: matrix algebra helpers (Hermitian draws/projections, adjoint maps)
-- `models/`: one file per model (`build_model(args)` entry point)
+```python
+import numpy as np
+d = np.load("data/triv_pikkt10d_D10_g0.1_N20/evals.npz")
+evals = d["values"]  # shape (niters, 10, 20)
+```
+
+---
+
+## Repository layout
+
+```
+matrix_hmc/
+  __init__.py       run(), configure()
+  simulation.py     run() implementation + I/O helpers
+  main.py           CLI entry point (~50 lines)
+  cli.py            argument parsing
+  config.py         device / dtype / threading setup
+  hmc.py            leapfrog integrator + Metropolis step
+  algebra.py        Hermitian draws, adjoint maps, projections
+  pfaffian.py       Pfaffian computation
+  models/
+    base.py         MatrixModel base class
+    utils.py        shared model utilities
+    pikkt4d_type1.py
+    pikkt4d_type2.py
+    pikkt10d.py
+    yangmills.py
+    adjoint_det.py
+    susyym_3d.py
+    1mm.py
+tests/
+  test_models.py    dry-run smoke test for every model
+  test_codebase.py  algebra, HMC, and model unit tests
+  test_cli.py       CLI argument parsing tests
+  test_ad_matrix.py adjoint-matrix and Pfaffian tests
+```

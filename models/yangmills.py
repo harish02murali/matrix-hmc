@@ -27,7 +27,27 @@ def build_model(args):
 
 
 class YangMillsModel(MatrixModel):
-    """D-dimensional Yang-Mills matrix model."""
+    """D-dimensional Yang-Mills matrix model.
+
+    The bosonic action is:
+
+    .. math::
+
+        S = \\frac{N}{g} \\left[ m \\sum_i \\mathrm{Tr}(X_i^2)
+            - \\frac{1}{2} \\sum_{i<j} \\mathrm{Tr}([X_i, X_j]^2) \\right]
+            - \\frac{N}{\\sqrt{g}} \\sum_i \\mathrm{Tr}(J_i X_i)
+
+    where ``D = nmat`` is the target-space dimension, ``g`` is the 't Hooft
+    coupling, ``m`` a mass parameter, and ``J_i`` an optional external source.
+
+    Args:
+        dim: Number of matrices ``D`` (target-space dimension).
+        ncol: Matrix size ``N``.
+        couplings: List of coupling constants; the first element is ``g``.
+        source: Optional external source array (see
+            :func:`~matrix_hmc.models.utils.parse_source`).
+        mass: Mass parameter ``m`` for the quadratic term. Default ``1.0``.
+    """
 
     model_name = model_name
 
@@ -40,7 +60,7 @@ class YangMillsModel(MatrixModel):
         self.g = self.couplings[0]
         self.mass = mass
 
-    def load_fresh(self, args):
+    def load_fresh(self):
         X = torch.zeros((self.nmat, self.ncol, self.ncol), dtype=config.dtype, device=config.device)
         self.set_state(X)
 

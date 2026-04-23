@@ -11,13 +11,31 @@ from matrix_hmc.algebra import random_hermitian
 
 @dataclass
 class HMCParams:
-    """Integrator controls for an HMC trajectory."""
+    """Integrator parameters for a single HMC trajectory.
+
+    Attributes:
+        dt: Leapfrog step size.  Typically computed as ``step_size / nsteps``.
+        nsteps: Number of leapfrog integration steps per trajectory.
+    """
     dt: float
     nsteps: int
     
 
 def hamil(X: torch.Tensor, mom_X: torch.Tensor, model: Any) -> float:
-    """Total Hamiltonian = potential(X) + kinetic(momentum)."""
+    """Compute the total HMC Hamiltonian ``H = V(X) + K(P)``.
+
+    The kinetic term is ``K = (1/2) sum_j Tr(P_j^2)`` where the sum runs over
+    all matrices in the configuration.
+
+    Args:
+        X: Current configuration tensor of shape ``(nmat, N, N)``.
+        mom_X: Momenta tensor of the same shape as ``X``.
+        model: A :class:`~matrix_hmc.models.base.MatrixModel` instance providing
+            ``potential(X)`` and the matrix count ``nmat``.
+
+    Returns:
+        Total Hamiltonian as a Python float.
+    """
     ham = model.potential(X).item()
     kin = 0.0
     for j in range(model.nmat):
@@ -27,7 +45,31 @@ def hamil(X: torch.Tensor, mom_X: torch.Tensor, model: Any) -> float:
 
 
 def leapfrog(X: torch.Tensor, hmc_params: HMCParams, model: Any) -> tuple[torch.Tensor, float, float]:
-    """Symplectic leapfrog integrator returning the proposal and initial/final energies."""
+    """Run a symplectic leapfrog trajectory from configuration *X*.
+
+    Momenta are refreshed by drawing from :func:`~matrix_hmc.algebra.random_hermitian`
+    at the start of each trajectory.  The integrator uses the velocity Verlet
+    (leapfrog) scheme::
+
+        P_{1/2} = P_0 - (dt/2) F(X_0)
+        X_k     = X_{k-1} + dt P_{k-1/2}     for k = 1, ..., nsteps-1
+        P_{k+1/2} = P_{k-1/2} - dt F(X_k)
+        X_final = X_{n-1} + (dt/2) P_final
+
+    If the model implements ``begin_trajectory(X)`` it is called before
+    integrating; ``end_trajectory(accepted)`` is **not** called here (see
+    :func:`update`).
+
+    Args:
+        X: Initial configuration of shape ``(nmat, N, N)``.
+        hmc_params: Step size and number of steps.
+        model: Model providing ``force(X)`` and matrix metadata.
+
+    Returns:
+        Tuple ``(X_new, H_init, H_final)`` where *X_new* is the proposed
+        configuration and *H_init* / *H_final* are the Hamiltonians evaluated
+        at the start and end of the trajectory.
+    """
     dt_local = hmc_params.dt
     begin_traj = getattr(model, "begin_trajectory", None)
     if callable(begin_traj):
@@ -56,7 +98,24 @@ def leapfrog(X: torch.Tensor, hmc_params: HMCParams, model: Any) -> tuple[torch.
 
 
 def update(acc_count: int, hmc_params: HMCParams, model: Any, reject_prob: float = 1.0):
-    """Run one HMC trajectory and Metropolis accept/reject step, mutating model.X."""
+    """Run one HMC trajectory and apply a Metropolis accept/reject step.
+
+    The model's internal state is updated in-place: on acceptance ``model.set_state``
+    receives the proposed configuration; on rejection the previous state is restored.
+    Progress is printed to stdout for every step.
+
+    Args:
+        acc_count: Running accepted-step counter (incremented on acceptance).
+        hmc_params: Leapfrog integrator parameters.
+        model: A :class:`~matrix_hmc.models.base.MatrixModel` instance whose
+            state will be mutated.
+        reject_prob: Rescales the Metropolis probability by this factor so that
+            ``p_accept = min(1, reject_prob * exp(-dH))``.  A value of 1.0
+            (default) gives standard HMC.
+
+    Returns:
+        Updated acceptance counter ``acc_count``.
+    """
     X = model.get_state()
     X_bak = X.clone()
     X_new, H0, H1 = leapfrog(X, hmc_params, model)
@@ -94,7 +153,18 @@ def update(acc_count: int, hmc_params: HMCParams, model: Any, reject_prob: float
 
 
 def thermalize(model: Any, hmc_params: HMCParams, steps: int = 10) -> None:
-    """Run short, mostly-accepting trajectories to move the system toward equilibrium."""
+    """Run short, highly-accepting trajectories to drive the system toward equilibrium.
+
+    Uses a modified :class:`HMCParams` with ``2x nsteps`` and ``dt / 20`` so that
+    the trajectories stay cheap and almost always accept, gradually moving away from
+    the initial configuration without wasting many evaluations.
+
+    Args:
+        model: A :class:`~matrix_hmc.models.base.MatrixModel` instance.
+        hmc_params: Base integrator parameters whose ``nsteps`` and ``dt`` are
+            rescaled internally.
+        steps: Number of thermalization trajectories to run (default: ``10``).
+    """
     print("Thermalization steps, accept most jumps")
     therm_params = replace(hmc_params, nsteps=int(hmc_params.nsteps * 2), dt=hmc_params.dt / 20.0)
     acc_count = 0

@@ -15,12 +15,27 @@ def parse_source(
     device: "torch.device",
     dtype: "torch.dtype",
 ) -> "torch.Tensor | None":
-    """Convert a numpy source array to an (nmat, N, N) tensor.
+    """Convert a NumPy source array to an ``(nmat, N, N)`` configuration tensor.
 
-    Accepted shapes:
-      (N,)         — diagonal coupling to X[0]; stored as (nmat, N, N)
-                     with [0] = diag(source) and [1:] = 0.
-      (nmat, N, N) — full coupling to all matrices; stored as-is.
+    The *source* term is an external field coupled linearly to the matrices.
+    Two input shapes are accepted:
+
+    * ``(N,)`` — diagonal coupling to ``X[0]`` only.  The result has
+      ``out[0] = diag(source)`` and ``out[1:] = 0``.
+    * ``(nmat, N, N)`` — full coupling tensor applied to all matrices.
+
+    Args:
+        source: Source array or ``None`` (no source).
+        nmat: Number of matrices in the model.
+        device: Target PyTorch device.
+        dtype: Target PyTorch dtype.
+
+    Returns:
+        Tensor of shape ``(nmat, N, N)`` on *device*, or ``None`` when
+        *source* is ``None``.
+
+    Raises:
+        ValueError: If *source* has an incompatible shape.
     """
     if source is None:
         return None
@@ -38,10 +53,18 @@ def parse_source(
 
 
 def source_grad_inplace(source: torch.Tensor, grad: list, ncol: int, g: float) -> None:
-    """Add the source contribution to the analytic gradient in-place.
+    """Add the external-source contribution to the analytic gradient in-place.
 
-    grad is a list of (N,N) tensors indexed by matrix.
-    source is always (nmat, N, N).
+    The linear source term in the action is ``-(N/sqrt(g)) Tr(J X)`` so its
+    contribution to the gradient with respect to ``X[i]`` is
+    ``-(N/sqrt(g)) * source[i]``.
+
+    Args:
+        source: Source tensor of shape ``(nmat, N, N)``.
+        grad: List of ``(N, N)`` gradient tensors, one per matrix (modified
+            in-place).
+        ncol: Matrix size ``N``.
+        g: Coupling constant ``g``.
     """
     coeff = -(ncol / g ** 0.5)
     for i in range(source.shape[0]):
@@ -91,7 +114,19 @@ def _fermion_det_log_identity_plus_sum_adX(X: torch.Tensor) -> torch.Tensor:
 
 
 def gammaMajorana() -> torch.Tensor:
-    """Construct Majorana gamma matrices and their conjugate in 4D."""
+    """Construct the 4D Majorana gamma matrices ``Γ_1, ..., Γ_4`` and the charge-conjugation matrix.
+
+    Uses the Majorana representation defined via Pauli matrices
+    ``σ_1, σ_2, σ_3`` and the ``2×2`` identity ``Id``.  The resulting
+    matrices satisfy the Clifford algebra
+    ``{Γ_μ, Γ_ν} = 2 δ_{μν}``.
+
+    Returns:
+        Tuple ``(gammas, conj)`` where *gammas* is a tensor of shape
+        ``(4, 4, 4)`` containing ``[Γ_1, Γ_2, Γ_3, Γ_4]`` and *conj* is the
+        ``4×4`` charge-conjugation matrix, all on ``config.device`` with
+        ``config.dtype``.
+    """
     sigma1 = torch.tensor([[0, 1], [1, 0]], dtype=config.dtype, device=config.device)
     sigma2 = torch.tensor([[0, -1j], [1j, 0]], dtype=config.dtype, device=config.device)
     sigma3 = torch.tensor([[1, 0], [0, -1]], dtype=config.dtype, device=config.device)
@@ -107,7 +142,15 @@ def gammaMajorana() -> torch.Tensor:
 
 
 def gammaWeyl() -> torch.Tensor:
-    """Construct the Weyl-basis Dirac matrices Gamma_1..Gamma_4."""
+    """Construct the 4D Weyl-basis Dirac matrices ``Γ_1, ..., Γ_4``.
+
+    The matrices are ``4×4`` block-off-diagonal in the Weyl (chiral) basis and
+    satisfy the Clifford algebra ``{Γ_μ, Γ_ν} = 2 δ_{μν}``.
+
+    Returns:
+        Tensor of shape ``(4, 4, 4)`` containing ``[Γ_1, Γ_2, Γ_3, Γ_4]``
+        on ``config.device`` with ``config.dtype``.
+    """
     sigma1 = torch.tensor([[0, 1], [1, 0]], dtype=config.dtype, device=config.device)
     sigma2 = torch.tensor([[0, -1j], [1j, 0]], dtype=config.dtype, device=config.device)
     sigma3 = torch.tensor([[1, 0], [0, -1]], dtype=config.dtype, device=config.device)

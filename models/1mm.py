@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from argparse import Namespace
 
 import numpy as np
 import torch
@@ -22,7 +21,25 @@ def build_model(args):
 
 
 class OneMatrixPolynomialModel(MatrixModel):
-    """Single-matrix polynomial model V(X) = sum_n t_n Tr(X^n)."""
+    """Single Hermitian matrix model with a polynomial potential.
+
+    The action is:
+
+    .. math::
+
+        S = N \\sum_{n=1}^{P} t_n \\, \\mathrm{Tr}(X^n)
+
+    where the coupling list ``[t_1, t_2, ..., t_P]`` determines the polynomial
+    degree and shape of the potential.
+
+    Args:
+        ncol: Matrix size ``N``.
+        couplings: List of polynomial coefficients ``[t_1, t_2, ..., t_P]``
+            (must be non-empty).
+
+    Raises:
+        ValueError: If *couplings* is empty.
+    """
 
     model_name = model_name
 
@@ -57,7 +74,7 @@ class OneMatrixPolynomialModel(MatrixModel):
             corrs = np.array(trace_powers, dtype=np.complex128)
         return eigs, corrs
     
-    def load_fresh(self, args: Namespace) -> None:
+    def load_fresh(self) -> None:
         """Load a fresh configuration (zero matrices)."""
         X = torch.stack([-2 * torch.eye(self.ncol, dtype=config.dtype, device=config.device) for _ in range(self.nmat)])
         # X = torch.zeros((self.nmat, self.ncol, self.ncol), dtype=config.dtype, device=config.device)
