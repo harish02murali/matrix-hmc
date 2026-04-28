@@ -9,7 +9,6 @@ import torch
 
 from matrix_hmc import config
 from matrix_hmc.algebra import (
-    add_trace_projector_inplace,
     ad_matrix,
     get_eye_cached,
     makeH,
@@ -125,26 +124,20 @@ class PIKKTTypeIIModel(MatrixModel):
         self.set_state(X)
 
     def fermionMat(self, X: torch.Tensor) -> torch.Tensor:
-        adX = 1j * ad_matrix(X[:4])
-        adX1, adX2, adX3, adX4 = adX
-        i = 1j
+        adX1, adX2, adX3, adX4 = ad_matrix(X[:4])
 
-        upper_left = -adX4 + i * adX3
-        upper_right = adX2 + i * adX1
-        lower_left = -adX2 + i * adX1
-        lower_right = -adX4 - i * adX3
+        upper_left = -adX4 + 1j * adX3
+        upper_right = adX2 + 1j * adX1
+        lower_left = -adX2 + 1j * adX1
+        lower_right = -adX4 - 1j * adX3
 
         top = torch.cat((upper_left, upper_right), dim=1)
         bottom = torch.cat((lower_left, lower_right), dim=1)
         K = torch.cat((top, bottom), dim=0)
 
-        K = K - self._eye23.to(dtype=K.dtype)
-
-        N = X.shape[-1]
-        dim = N * N
-        add_trace_projector_inplace(K[:dim, :dim], N)
-        add_trace_projector_inplace(K[dim:, dim:], N)
-        return K
+        # The mass block -(2/3)*I already makes K invertible in the trace sector;
+        # no trace projector needed.
+        return K - self._eye23.to(dtype=K.dtype)
 
     def _fermion_force(self, X: torch.Tensor) -> torch.Tensor:
         K = self.fermionMat(X)

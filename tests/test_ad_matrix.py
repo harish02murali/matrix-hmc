@@ -117,7 +117,7 @@ class AdMatrixTests(unittest.TestCase):
             X = torch.randn(n, n, dtype=torch.complex128)
             A = torch.randn(n, n, dtype=torch.complex128)
 
-            expected = vec_col(X @ A - A @ X)
+            expected = 1j * vec_col(X @ A - A @ X)
             actual = ad_matrix(X) @ vec_col(A)
 
             torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
@@ -130,12 +130,12 @@ class AdMatrixTests(unittest.TestCase):
             X = torch.randn(batch, n, n, dtype=torch.complex128)
             A = torch.randn(batch, n, n, dtype=torch.complex128)
 
-            expected = torch.stack([vec_col(X[i] @ A[i] - A[i] @ X[i]) for i in range(batch)])
+            expected = torch.stack([1j * vec_col(X[i] @ A[i] - A[i] @ X[i]) for i in range(batch)])
             actual = torch.einsum("bij,bj->bi", ad_matrix(X), torch.stack([vec_col(a) for a in A]))
 
             torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
 
-    def test_is_hermitian_for_hermitian_inputs_and_annihilates_identity(self) -> None:
+    def test_is_antihermitian_for_hermitian_inputs_and_annihilates_identity(self) -> None:
         # torch.manual_seed(2)
 
         for n in (2, 3, 4):
@@ -143,7 +143,7 @@ class AdMatrixTests(unittest.TestCase):
             X = (X + dagger(X)) / 2
             adX = ad_matrix(X)
 
-            torch.testing.assert_close(adX, dagger(adX), rtol=1e-12, atol=1e-12)
+            torch.testing.assert_close(adX, -dagger(adX), rtol=1e-12, atol=1e-12)
             torch.testing.assert_close(
                 adX @ vec_col(torch.eye(n, dtype=torch.complex128)),
                 torch.zeros(n * n, dtype=torch.complex128),
@@ -162,7 +162,7 @@ class AdMatrixTests(unittest.TestCase):
             vecA = Q @ coeffs
             A = unvec_col(vecA, n)
 
-            expected = vec_col(X @ A - A @ X)
+            expected = 1j * vec_col(X @ A - A @ X)
             actual = ad_matrix(X) @ vecA
 
             torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
@@ -205,7 +205,7 @@ class AdMatrixTests(unittest.TestCase):
             X = torch.randn(n, n, dtype=torch.complex128)
             X = (X + dagger(X)) / 2
 
-            adX = 1j * ad_matrix(X)
+            adX = ad_matrix(X)
             adX_real = ad_matrix_real_antisymmetric(X)
 
             expected_det = torch.linalg.det(adX)

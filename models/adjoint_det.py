@@ -21,12 +21,14 @@ model_name = "adjoint_det"
 def build_model(args):
     if args.nmat is None:
         raise ValueError("--nmat must be provided for adjoint_det model")
+    num_fermions = args.num_fermions if args.num_fermions is not None else 2 * (args.nmat - 2)
     return AdjointDetModel(
         dim=args.nmat,
         ncol=args.ncol,
         couplings=args.coupling,
         source=args.source,
-        det_coeff=args.det_coeff,
+        num_fermions=num_fermions,
+        massless=args.massless,
     )
 
 
@@ -40,10 +42,10 @@ class AdjointDetModel(MatrixModel):
 
         S = \frac{N}{g} \left[ \mathrm{Tr}({\sum_i X_i^2})
             - \frac{1}{2} \sum_{i<j} \mathrm{Tr}([X_i, X_j]^2) \right]
-            - c \cdot (D-2) \sum_{a<b} \log\!\left(1 + (\mu_a - \mu_b)^2\right)
+            - \frac{N_f}{2} \sum_{a<b} \log\!\left(1 + (\mu_a - \mu_b)^2\right)
 
-    where ``\mu_a`` are the eigenvalues of ``\sqrt{\sum_i X_i^2}``, ``D = nmat``
-    is the dimension, and ``c`` is *det_coeff*.
+    With ``--massless`` the mass term ``\mathrm{Tr}(\sum_i X_i^2)`` is dropped,
+    the log-det becomes ``\log(\mu_a - \mu_b)^2``, and ``g`` is fixed to 1.
 
     Args:
         dim: Number of matrices ``D``.
@@ -51,18 +53,21 @@ class AdjointDetModel(MatrixModel):
         couplings: List of couplings; ``couplings[0]`` is ``g``.
         source: Optional external source (see
             :func:`~matrix_hmc.models.utils.parse_source`).
-        det_coeff: Coefficient *c* in front of the fermionic log-det.
-            Default ``0.5``.
+        num_fermions: Number of adjoint fermions ``N_f``.
+            Default ``2*(dim-2)``.
+        massless: Drop ``Tr(X²)`` mass term and replace ``log(1+Δ²)`` with
+            ``log(Δ²)`` in the fermion determinant. Forces ``g=1``.
     """
 
     model_name = model_name
 
-    def __init__(self, dim: int, ncol: int, couplings: list, source: np.ndarray | None = None, det_coeff: float = 0.5) -> None:
+    def __init__(self, dim: int, ncol: int, couplings: list, source: np.ndarray | None = None, num_fermions: int | None = None, massless: bool = False) -> None:
         super().__init__(nmat=dim, ncol=ncol)
         self.source = parse_source(source, dim, config.device, config.dtype)
         self.couplings = couplings
-        self.g = self.couplings[0]
-        self.det_coeff = det_coeff
+        self.massless = massless
+        self.g = 1.0 if massless else self.couplings[0]
+        self.num_fermions = num_fermions if num_fermions is not None else 2 * (dim - 2)
         self.is_hermitian = True
         self.is_traceless = True
 
@@ -74,23 +79,26 @@ class AdjointDetModel(MatrixModel):
         self.set_state(X)
 
     def _fermion_det(self, X: torch.Tensor) -> torch.Tensor:
-        r"""Return log|det(1 + i sum_i ad_{\sqrt{X^2}})|."""
         sum_X2 = (X @ X).sum(dim=0)
         eigvals = torch.sqrt(torch.linalg.eigvalsh(sum_X2).real.to(dtype=config.real_dtype))
         N = eigvals.shape[0]
         i_idx, j_idx = torch.triu_indices(N, N, offset=1, device=eigvals.device)
         delta = eigvals[j_idx] - eigvals[i_idx]   # >= 0 since eigvalsh returns sorted ascending
+        if self.massless:
+            return torch.log(delta * delta).sum()
         return torch.log(1 + delta * delta).sum()
 
     def potential(self, X: torch.Tensor | None = None) -> torch.Tensor:
         X = self._resolve_X(X)
         sum_X2 = (X @ X).sum(dim=0)
-        trace_sq = torch.einsum("ii->", sum_X2).real
-        # quartic = torch.einsum("ii->", sum_X2 @ sum_X2).real
         comm_term = -0.5 * _commutator_action_sum(X).real
-        bos = trace_sq + comm_term
+        if self.massless:
+            bos = comm_term
+        else:
+            trace_sq = torch.einsum("ii->", sum_X2).real
+            bos = trace_sq + comm_term
 
-        det = -self.det_coeff * (self.nmat - 2) * self._fermion_det(X)
+        det = -self.num_fermions * (0.5 * self._fermion_det(X))
 
         src = torch.tensor(0.0, dtype=X.dtype, device=X.device)
         if self.source is not None:
@@ -143,6 +151,8 @@ class AdjointDetModel(MatrixModel):
             {
                 "has_source": self.source is not None,
                 "model_variant": "adjoint_det",
+                "num_fermions": self.num_fermions,
+                "massless": self.massless,
             }
         )
         return meta

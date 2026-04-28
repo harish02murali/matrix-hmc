@@ -342,12 +342,15 @@ def get_hermitian_diag_basis_change_cached(N: int, device: torch.device, dtype: 
 
 
 def ad_matrix(X: torch.Tensor) -> torch.Tensor:
-    """Construct the adjoint-action super-operator ``ad_X`` on the full matrix space ``M_N(C)``.
+    """Construct the super-operator ``i·ad_X`` on the full matrix space ``M_N(C)``.
 
     For a vector ``v = vec(A)`` the result satisfies
-    ``(ad_X v) = vec([X, A])``.
-    Implemented as ``I⊗X - X^T⊗I`` via a single Kronecker-product construction,
-    avoiding redundant allocations.
+    ``(ad_X v) = vec(i·[X, A]) = i·vec(XA - AX)``.
+    Implemented as ``i·(I⊗X - X^T⊗I)`` via a single Kronecker-product construction.
+
+    For Hermitian ``X`` the result is anti-Hermitian (skew-Hermitian), consistent
+    with :func:`ad_matrix_real_antisymmetric` which represents the same operator in the
+    real Hermitian basis.
 
     Args:
         X: Matrix of shape ``(N, N)`` or batched ``(B, N, N)``.
@@ -375,7 +378,7 @@ def ad_matrix(X: torch.Tensor) -> torch.Tensor:
     # T.permute(0,4,1,2,3)[b,i,k,j,l] = δ_{kl} X[b,j,i]  (X^T⊗I)
     # ad_X = I⊗X - X^T⊗I
     T = torch.einsum("ij,...kl->...ikjl", I, X)
-    result = (T - T.permute(0, 4, 1, 2, 3)).reshape(B, N * N, N * N)
+    result = 1j * (T - T.permute(0, 4, 1, 2, 3)).reshape(B, N * N, N * N)
 
     if single:
         result = result.squeeze(0)
@@ -427,8 +430,8 @@ def ad_matrix_real_antisymmetric(X: torch.Tensor, *, traceless: bool = False) ->
     _, N, _ = X.shape
     real_dtype = X.real.dtype if X.is_complex() else X.dtype
 
-    # ``i ad_X`` preserves Hermitian matrices for Hermitian X.
-    superop = 1j * ad_matrix(X)
+    # ad_matrix already returns i·ad_X, which preserves Hermitian matrices for Hermitian X.
+    superop = ad_matrix(X)
 
     diag_idx, upper_idx, lower_idx = get_hermitian_basis_indices_cached(N, X.device)
     diag_rows = superop.index_select(-2, diag_idx)

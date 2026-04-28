@@ -22,7 +22,7 @@ def build_model(args):
         couplings=args.coupling,
         source=args.source,
         massless=getattr(args, "massless", False),
-        pfaffian_every=getattr(args, "pfaffian_every", 1),
+        pfaffian_every=getattr(args, "pfaffian_every", None),
         spin=getattr(args, "spin", None),
     )
 
@@ -60,7 +60,7 @@ class PIKKT10DModel(MatrixModel):
         couplings: list,
         source: np.ndarray | None = None,
         massless: bool = False,
-        pfaffian_every: int = 1,
+        pfaffian_every: int | None = None,
         spin: float | None = None,
     ) -> None:
         super().__init__(nmat=10, ncol=ncol)
@@ -68,7 +68,7 @@ class PIKKT10DModel(MatrixModel):
         self.g = self.couplings[0]
         self.omega = 1.0
         self.massless = massless
-        self.pfaffian_every = int(pfaffian_every)
+        self.pfaffian_every = int(pfaffian_every) if pfaffian_every is not None else None
         self.spin = spin
         self._measure_calls = 0
         self.source = parse_source(source, self.nmat, config.device, config.dtype)
@@ -156,7 +156,7 @@ class PIKKT10DModel(MatrixModel):
         N2 = self.ncol ** 2
 
         N = self.ncol
-        adX = 1j * ad_matrix(X)  # (10, N^2, N^2) — batched over all 10 matrices at once
+        adX = ad_matrix(X)  # (10, N^2, N^2) — each adX[I] = i*[X_I, .]
 
         if self.massless:
             # Pure IKKT: Pf(i/2 * gamma_bar^I ⊗ ad_{X_I})
@@ -164,20 +164,20 @@ class PIKKT10DModel(MatrixModel):
             gb = self._gb.to(device=X.device, dtype=X.dtype)
             # sum_I kron(gb[I], adX[I]): result[i*N2+k, j*N2+l] = sum_I gb[I,i,j]*adX[I,k,l]
             M = 0.5j * torch.einsum("Iij,Ikl->ikjl", gb, adX).reshape(16 * N2, 16 * N2)
+
+            # Lift the trace-mode zero in all 16 diagonal N^2×N^2 blocks.
+            # The mass block in the massive case already makes M invertible there.
+            diag_idx = get_trace_diag_indices_cached(N, M.device)           # (N,)
+            offsets = torch.arange(16, dtype=torch.long, device=M.device) * N2  # (16,)
+            g = (offsets.unsqueeze(1) + diag_idx.unsqueeze(0))             # (16, N)
+            M[g.unsqueeze(2).expand(16, N, N).reshape(-1),
+              g.unsqueeze(1).expand(16, N, N).reshape(-1)] += 1.0 / N
         else:
             # pIKKT: Pf(i/2 * gamma_bar^I ⊗ ad_{X_I} + i/8 * gamma_bar^{123} ⊗ 1)
             # after factoring: -0.5 * log|det(1 - 4 G^I ⊗ ad_{X_I})|
             G = self._G.to(device=X.device, dtype=X.dtype)
             kron_sum = torch.einsum("Iij,Ikl->ikjl", G, adX).reshape(16 * N2, 16 * N2)
             M = torch.eye(16 * N2, dtype=X.dtype, device=X.device) - 4.0 * kron_sum
-
-        # Lift the trace-mode zero in all 16 diagonal N^2 x N^2 blocks simultaneously.
-        # Adds (1/N)|vec(I)><vec(I)| to M[j*N2+d_i, j*N2+d_j] for all j, d_i, d_j.
-        diag_idx = get_trace_diag_indices_cached(N, M.device)           # (N,)
-        offsets = torch.arange(16, dtype=torch.long, device=M.device) * N2  # (16,)
-        g = (offsets.unsqueeze(1) + diag_idx.unsqueeze(0))             # (16, N)
-        M[g.unsqueeze(2).expand(16, N, N).reshape(-1),
-          g.unsqueeze(1).expand(16, N, N).reshape(-1)] += 1.0 / N
 
         _, logdet = torch.slogdet(M)
         return -0.5 * logdet
@@ -279,16 +279,20 @@ class PIKKT10DModel(MatrixModel):
                 .cpu()
                 .numpy()
             )
-            if (self._measure_calls % self.pfaffian_every) == 0:
-                pf0 = self.fermion_pfaffian(X)[0]
-            else:
-                pf0 = torch.full((), complex(float("nan"), float("nan")), dtype=X.dtype, device=X.device)
-
             trace_sq = torch.einsum("bij,bji->b", X, X).real
             tr_i = trace_sq[:3].sum() / (3 * self.ncol)
             tr_p = trace_sq[3:].sum() / (7 * self.ncol)
             comm = _commutator_action_sum(X).real / self.ncol
-            corrs = torch.stack([tr_i, tr_p, comm, pf0]).cpu().numpy()
+            corrs_parts = [torch.stack([tr_i, tr_p, comm]).cpu().numpy()]
+
+            if self.pfaffian_every is not None:
+                if (self._measure_calls % self.pfaffian_every) == 0:
+                    pf0 = self.fermion_pfaffian(X)[0]
+                else:
+                    pf0 = torch.full((), complex(float("nan"), float("nan")), dtype=X.dtype, device=X.device)
+                corrs_parts.append(np.array([pf0.cpu().numpy()]))
+
+            corrs = np.concatenate(corrs_parts)
 
         return eigs, corrs
 
@@ -314,8 +318,9 @@ class PIKKT10DModel(MatrixModel):
         lines = [
             f"  Coupling g               = {self.g}",
             f"  Fermion determinant      = {fdet_str}",
-            f"  Pfaffian every           = {self.pfaffian_every}",
         ]
+        if self.pfaffian_every is not None:
+            lines.append(f"  Pfaffian every           = {self.pfaffian_every}")
         if not self.massless:
             lines.insert(1, "  Omega                    = 1 (fixed)")
         return lines

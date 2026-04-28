@@ -20,12 +20,14 @@ from matrix_hmc.models.utils import (
 	_commutator_action_sum,
 	parse_source,
 )
+from matrix_hmc.pfaffian import slogpfaff
 
 model_name = "susyym_3d"
 
 # The 3 matrix model action is S = N/g (-0.5 * _commutator_action_sum(X) + tr X^2 - 0.5 * log|det(M)|
-# where M = [[1/2 (-i adX[0] + adX[2]), identity + 1/2 i adX[1]],
-#            [-identity + 1/2 i adX[1], 1/2 (i adX[0] + adX[2])]].
+# where adXk = i*[Xk,.] and (massive case)
+# M = [[-0.5*(adX[0] + i*adX[2]),  fm*I + 0.5*adX[1]],
+#      [-fm*I + 0.5*adX[1],         0.5*(adX[0] - i*adX[2])]].
 
 
 def build_model(args):
@@ -35,6 +37,7 @@ def build_model(args):
 		source=args.source,
 		fermion_mass=getattr(args, "fermion_mass", 1.0),
 		boson_mass=getattr(args, "boson_mass", 1.0),
+		pfaffian_every=getattr(args, "pfaffian_every", None),
 	)
 
 
@@ -61,6 +64,8 @@ class SUSYYM3DModel(MatrixModel):
 			:func:`~matrix_hmc.models.utils.parse_source`).
 		fermion_mass: Mass parameter for the fermion matrix. Default ``1.0``.
 		boson_mass: Coefficient of the quadratic bosonic term. Default ``1.0``.
+		pfaffian_every: Compute the Pfaffian sign every this many measurement
+			calls.  ``None`` (default) disables Pfaffian measurement entirely.
 	"""
 
 	model_name = model_name
@@ -72,12 +77,15 @@ class SUSYYM3DModel(MatrixModel):
 		source: np.ndarray | None = None,
 		fermion_mass: float = 1.0,
 		boson_mass: float = 1.0,
+		pfaffian_every: int | None = None,
 	) -> None:
 		super().__init__(nmat=3, ncol=ncol)
 		self.couplings = couplings
 		self.g = self.couplings[0]
 		self.fermion_mass = float(fermion_mass)
 		self.boson_mass = float(boson_mass)
+		self.pfaffian_every = int(pfaffian_every) if pfaffian_every is not None else None
+		self._measure_calls = 0
 		self.source = parse_source(source, self.nmat, config.device, config.dtype)
 		self.is_hermitian = True
 		self.is_traceless = True
@@ -89,26 +97,32 @@ class SUSYYM3DModel(MatrixModel):
 		self.set_state(X)
 
 	def fermion_matrix(self, X: torch.Tensor) -> torch.Tensor:
-		adX0, adX1, adX2 = ad_matrix(X[:3])
+		adX0, adX1, adX2 = ad_matrix(X[:3])  # each adXk = i*[Xk, .]
 		dim = self.ncol * self.ncol
 		eye = get_eye_cached(dim, device=X.device, dtype=X.dtype)
 
-		if self.fermion_mass == 0.0: # krauth-nicolai-staudacher basis for gamama matrices
-			upper_left = (adX2 + 1j * adX1)
-			upper_right = 1j * adX0
-			lower_left = 1j * adX0
-			lower_right = (adX2 - 1j * adX1)
+		if self.fermion_mass == 0.0:  # Krauth-Nicolai-Staudacher basis
+			upper_left = adX1 - 1j * adX2
+			upper_right = adX0
+			lower_left = adX0
+			lower_right = -(adX1 + 1j * adX2)
+
+			# Zero mode from trace sector: ±fm*I off-diagonal absent, projector needed.
+			add_trace_projector_inplace(upper_left, self.ncol)
+			add_trace_projector_inplace(lower_right, self.ncol)
 		else:
-			upper_left = 0.5 * (-1j * adX0 + adX2)
-			upper_right = self.fermion_mass * eye + 0.5j * adX1
-			lower_left = -self.fermion_mass * eye + 0.5j * adX1
-			lower_right = 0.5 * (1j * adX0 + adX2)
+			upper_left = -0.5 * (adX0 + 1j * adX2)
+			upper_right = self.fermion_mass * eye + 0.5 * adX1
+			lower_left = -self.fermion_mass * eye + 0.5 * adX1
+			lower_right = 0.5 * (adX0 - 1j * adX2)
 
-		add_trace_projector_inplace(upper_left, self.ncol)
-		add_trace_projector_inplace(lower_right, self.ncol)
-
-		return torch.cat((torch.cat((upper_left, upper_right), dim=1), 
+		return torch.cat((torch.cat((upper_left, upper_right), dim=1),
 						torch.cat((lower_left, lower_right), dim=1)), dim=0)
+
+	def fermion_pfaffian(self, X: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+		"""Return ``(sign, log|pf(M_F)|)`` for the fermionic Pfaffian."""
+		X = self._resolve_X(X)
+		return slogpfaff(self.fermion_matrix(X))
 
 	def potential(self, X: torch.Tensor | None = None) -> torch.Tensor:
 		X = self._resolve_X(X)
@@ -126,6 +140,7 @@ class SUSYYM3DModel(MatrixModel):
 	def measure_observables(self, X: torch.Tensor | None = None):
 		with torch.no_grad():
 			X = self._resolve_X(X)
+			self._measure_calls += 1
 			eigs = [torch.linalg.eigvalsh(mat).cpu().numpy() for mat in X]
 			eigs.append(torch.linalg.eigvals(X[0] + 1j * X[1]).cpu().numpy())
 
@@ -133,12 +148,19 @@ class SUSYYM3DModel(MatrixModel):
 			anticomm_raw = _anticommutator_action_sum(X).real.item() / self.nmat / (self.nmat - 1) / self.ncol
 			moments = torch.einsum("aij,bji->ab", X, X).real
 
-			corrs = np.concatenate(
-				(
-					np.array([anticomm_raw, comm_raw], dtype=np.float64),
-					moments.detach().cpu().numpy().astype(np.float64).reshape(-1),
-				)
-			)
+			parts = [
+				np.array([anticomm_raw, comm_raw], dtype=np.float64),
+				moments.detach().cpu().numpy().astype(np.float64).reshape(-1),
+			]
+
+			if self.pfaffian_every is not None:
+				if (self._measure_calls % self.pfaffian_every) == 0:
+					pf_sign = self.fermion_pfaffian(X)[0]
+				else:
+					pf_sign = torch.full((), complex(float("nan"), float("nan")), dtype=X.dtype, device=X.device)
+				parts.append(np.array([pf_sign.cpu().numpy()]))
+
+			corrs = np.concatenate(parts)
 
 		return eigs, corrs
 
@@ -163,11 +185,14 @@ class SUSYYM3DModel(MatrixModel):
 		)
 
 	def extra_config_lines(self) -> list[str]:
-		return [
-			f"  Coupling g               = {self.g}",
-			f"  Fermion mass deformation = {self.fermion_mass}",
-			f"  Boson mass deformation   = {self.boson_mass}",
+		lines = [
+			f"  Coupling g     = {self.g}",
+			f"  Fermion mass   = {self.fermion_mass}",
+			f"  Boson mass     = {self.boson_mass}",
 		]
+		if self.pfaffian_every is not None:
+			lines.append(f"  Pfaffian every = {self.pfaffian_every}")
+		return lines
 
 	def run_metadata(self) -> dict[str, object]:
 		meta = super().run_metadata()
@@ -177,6 +202,7 @@ class SUSYYM3DModel(MatrixModel):
 				"model_variant": "susyym_3d",
 				"fermion_mass": self.fermion_mass,
 				"boson_mass": self.boson_mass,
+				"pfaffian_every": self.pfaffian_every,
 			}
 		)
 		return meta

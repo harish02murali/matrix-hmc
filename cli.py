@@ -397,15 +397,13 @@ def _build_parser() -> argparse.ArgumentParser:
     ym.add_argument("--mass", type=float, default=1.0,
                     help="Coefficient of the Tr(X_i²) mass term (1.0 = standard Yang-Mills).")
 
-    s3d = parser.add_argument_group("3D SUSY YM  (--model susyym_3d)")
+    s3d = parser.add_argument_group("3D SUSY YM  (--model susyym_3d) / Type I  (--model pikkt4d_type1)")
     s3d.add_argument("--fermion-mass", type=float, default=1.0, dest="fermion_mass",
-                     help="Adjoint fermion mass deformation.")
+                     help="Fermion mass deformation (susyym_3d: adjoint mass; pikkt4d_type1: constant-block rescaling η).")
     s3d.add_argument("--boson-mass", type=float, default=1.0, dest="boson_mass",
-                     help="Boson Tr(X_i²) mass coefficient.")
+                     help="Coefficient of the Tr(X_i²) mass term.")
 
     t1 = parser.add_argument_group("Type I  (--model pikkt4d_type1)")
-    t1.add_argument("--eta", type=float, default=1.0,
-                    help="Fermion deformation parameter η (1.0 = undeformed SUSY).")
     t1.add_argument("--massless", action="store_true",
                     help="Remove mass / Myers term (bare IKKT / Pfaffian).")
 
@@ -414,14 +412,14 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="Spin j for fuzzy-sphere background in X₁, X₂, X₃.")
     t2.add_argument("--bosonic", action="store_true",
                     help="Disable fermionic determinant (purely bosonic run).")
-    t2.add_argument("--pfaffian-every", type=int, default=1, dest="pfaffian_every",
-                    help="Measure Pfaffian observables every K trajectories.")
+    t2.add_argument("--pfaffian-every", type=int, default=None, dest="pfaffian_every",
+                    help="Measure Pfaffian sign every K trajectories (susyym_3d, pikkt10d). Default: disabled.")
     t2.add_argument("--lorentzian", action="store_true",
                     help="Wick-rotate X₄ → i X₄ in the Type II potential.")
 
     ad = parser.add_argument_group("Adjoint det  (--model adjoint_det)")
-    ad.add_argument("--det-coeff", type=float, default=0.5, dest="det_coeff",
-                    help="Coefficient in the fermion determinant term.")
+    ad.add_argument("--num-fermions", type=int, default=None, dest="num_fermions",
+                    help="Number of real adjoint fermions (default: 2*(nmat-2)).")
 
     return parser
 
@@ -538,8 +536,10 @@ def validate_args(args: argparse.Namespace) -> None:
     if model_lower == "pikkt4d_type1":
         if len(args.coupling) != 1:
             raise ValueError("pikkt4d_type1 requires exactly one coupling: --coupling g")
-        if not math.isfinite(args.eta) or args.eta == 0.0:
-            raise ValueError("--eta must be finite and non-zero")
+        if not math.isfinite(args.fermion_mass) or args.fermion_mass == 0.0:
+            raise ValueError("--fermion-mass must be finite and non-zero")
+        if not math.isfinite(args.boson_mass):
+            raise ValueError("--boson-mass must be finite")
 
     if model_lower == "pikkt4d_type2":
         if len(args.coupling) != 2:
@@ -581,7 +581,7 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--step-size must be positive")
     if args.save_every < 1:
         raise ValueError("--save-every must be positive")
-    if args.pfaffian_every < 1:
+    if args.pfaffian_every is not None and args.pfaffian_every < 1:
         raise ValueError("--pfaffian-every must be positive")
     if args.threads is not None and args.threads < 1:
         raise ValueError("--threads must be positive")
@@ -600,7 +600,7 @@ def _validate_common_args(args: argparse.Namespace) -> None:
         raise ValueError("--step-size must be positive")
     if args.save_every < 1:
         raise ValueError("--save-every must be positive")
-    if args.pfaffian_every < 1:
+    if args.pfaffian_every is not None and args.pfaffian_every < 1:
         raise ValueError("--pfaffian-every must be positive")
     if args.threads is not None and args.threads < 1:
         raise ValueError("--threads must be positive")

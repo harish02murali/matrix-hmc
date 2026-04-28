@@ -24,16 +24,19 @@ def build_model(args):
         ncol=args.ncol,
         couplings=args.coupling,
         source=args.source,
-        eta=getattr(args, "eta", 1.0),
+        fermion_mass=getattr(args, "fermion_mass", 1.0),
+        boson_mass=getattr(args, "boson_mass", 1.0),
         massless=getattr(args, "massless", False),
     )
 
 
-def _type1_logdet_impl(X: torch.Tensor, A: torch.Tensor, eta: float = 1.0, massless: bool = False) -> torch.Tensor:
-    """Original implementation — kept for benchmarking against _type1_logdet_impl."""
-    # eta rescales the constant fermion block: A -> eta*A and A^{-1} -> (1/eta)*A^{-1}.
-    eta_t = torch.tensor(eta, dtype=X.dtype, device=X.device)
-    adX = 1j * ad_matrix(X[:4])
+def _type1_logdet_impl(X: torch.Tensor, A: torch.Tensor, fermion_mass: float = 1.0) -> torch.Tensor:
+    """Compute (sign, log|det K|) for the massive Type I fermion matrix via Schur complement.
+
+    fermion_mass rescales the constant fermion block: A -> fermion_mass*A.
+    """
+    fm_t = torch.tensor(fermion_mass, dtype=X.dtype, device=X.device)
+    adX = ad_matrix(X[:4])   # each adXk = i*[Xk, .]
     adX1, adX2, adX3, adX4 = adX
     i = torch.tensor(1j, dtype=X.dtype, device=X.device)
     twoi = torch.tensor(2j, dtype=X.dtype, device=X.device)
@@ -43,43 +46,26 @@ def _type1_logdet_impl(X: torch.Tensor, A: torch.Tensor, eta: float = 1.0, massl
     lower_left = -(adX1 + i * adX2)
     lower_right = adX3 - i * adX4
 
+    # C and AB encode the adjoint-action blocks of the Schur complement reduction.
+    # Note: blocks are arranged so that det(K) is real — verified numerically.
     C = torch.cat(
         (torch.cat((upper_left, lower_left), dim=1), torch.cat((upper_right, lower_right), dim=1)),
         dim=0,
     )
-    N = X.shape[-1]
-    dim = N * N
-
-    if massless:
-        B = torch.cat(
-        (torch.cat((upper_left, upper_right), dim=1), torch.cat((lower_left, lower_right), dim=1)),
+    AB = torch.cat(
+        (
+            torch.cat((twoi * lower_left, twoi * lower_right), dim=1),
+            torch.cat((-twoi * upper_left, -twoi * upper_right), dim=1),
+        ),
         dim=0,
-        )
-        add_trace_projector_inplace(C[:dim, :dim], N)
-        add_trace_projector_inplace(C[dim:, dim:], N)
-        add_trace_projector_inplace(B[:dim, :dim], N)
-        add_trace_projector_inplace(B[dim:, dim:], N)
-        det = torch.slogdet(C) + torch.slogdet(B)
-    else:
-        AB = torch.cat(
-            (
-                torch.cat((twoi * lower_left, twoi * lower_right), dim=1),
-                torch.cat((-twoi * upper_left, -twoi * upper_right), dim=1),
-            ),
-            dim=0,
-        )
+    )
 
-        K = -eta_t * A - (0.25 / eta_t) * (C @ AB)
+    K = -fm_t * A - (0.25 / fm_t) * (C @ AB)
 
-        # Lift zero modes from the trace sector (identity direction)
-        # This adds a constant mass term to the trace mode, ensuring invertibility
-        # without affecting the physics (since it's a constant factor in det).
-        add_trace_projector_inplace(K[:dim, :dim], N)
-        add_trace_projector_inplace(K[dim:, dim:], N)
+    # No trace projector needed: the mass block A already makes K invertible
+    # in the trace sector (ad_{X}|vec(I)> = 0 but A contributes ±2i*fm there).
 
-        det = torch.slogdet(K)
-
-    return det
+    return torch.slogdet(K)
 
 def _type1_massless_staudacher(X: torch.Tensor) -> torch.Tensor:
     """Using Krauth-Staudacher formula for the massless case, as described in their 1998 paper (https://arxiv.org/abs/hep-th/9803117). Kept for benchmarking.
@@ -87,7 +73,7 @@ def _type1_massless_staudacher(X: torch.Tensor) -> torch.Tensor:
          (i adX2-adX1, adX4 - i adX3))
     """
 
-    adX1, adX2, adX3, adX4 = 1j * ad_matrix(X[:4])
+    adX1, adX2, adX3, adX4 = ad_matrix(X[:4])
 
     mat = torch.cat(
         (
@@ -126,19 +112,22 @@ class PIKKTTypeIModel(MatrixModel):
             coupling ``g``.
         source: Optional external source (see
             :func:`~matrix_hmc.models.utils.parse_source`).
-        eta: Rescaling factor for the constant fermion block. Default ``1.0``.
+        fermion_mass: Rescaling factor for the constant fermion block (η).
+            Default ``1.0``.
+        boson_mass: Coefficient of the ``Tr(X_i²)`` mass term. Default ``1.0``.
         massless: If ``True``, use the massless Krauth-Staudacher formula
             (zero quadratic term). Default ``False``.
     """
 
     model_name = model_name
 
-    def __init__(self, ncol: int, couplings: list, source: np.ndarray | None = None, eta: float = 1.0, massless: bool = False) -> None:
+    def __init__(self, ncol: int, couplings: list, source: np.ndarray | None = None, fermion_mass: float = 1.0, boson_mass: float = 1.0, massless: bool = False) -> None:
         super().__init__(nmat=4, ncol=ncol)
         self.couplings = couplings
         self.g = self.couplings[0]
         self.source = parse_source(source, self.nmat, config.device, config.dtype)
-        self.eta = float(eta)
+        self.fermion_mass = float(fermion_mass)
+        self.boson_mass = float(boson_mass)
         self.massless = massless
         self.is_hermitian = True
         self.is_traceless = True
@@ -154,8 +143,9 @@ class PIKKTTypeIModel(MatrixModel):
 
         def base_fn(X: torch.Tensor, *, model=self) -> torch.Tensor:
             if model.massless:
-                return 2 * _type1_massless_staudacher(X)
-            return _type1_logdet_impl(X, model._type1_A, eta=model.eta, massless=model.massless)
+                s, ldet = _type1_massless_staudacher(X)
+                return s, 2 * ldet
+            return _type1_logdet_impl(X, model._type1_A, fermion_mass=model.fermion_mass)
 
         self._log_det_fn = base_fn
 
@@ -166,7 +156,7 @@ class PIKKTTypeIModel(MatrixModel):
     def potential(self, X: torch.Tensor | None = None) -> torch.Tensor:
         X = self._resolve_X(X)
         bos = -0.5 * _commutator_action_sum(X)
-        trace_sq = 0.0 if self.massless else torch.einsum("bij,bji->", X, X)
+        trace_sq = 0.0 if self.massless else self.boson_mass * torch.einsum("bij,bji->", X, X)
         bos = bos + trace_sq
 
         det = -0.5 * self._log_det_fn(X)[1].real
@@ -205,10 +195,11 @@ class PIKKTTypeIModel(MatrixModel):
         return eigs, corrs
 
     def build_paths(self, name_prefix: str, data_path: str) -> dict[str, str]:
-        eta_suffix = f"_eta{round(self.eta, 4)}" if self.eta != 1.0 else ""
+        fm_suffix = f"_fm{round(self.fermion_mass, 4)}" if self.fermion_mass != 1.0 else ""
+        bm_suffix = f"_bm{round(self.boson_mass, 4)}" if self.boson_mass != 1.0 else ""
         run_dir = os.path.join(
             data_path,
-            f"{name_prefix}_{self.model_name}_g{round(self.g, 4)}{eta_suffix}_N{self.ncol}",
+            f"{name_prefix}_{self.model_name}_g{round(self.g, 4)}{fm_suffix}{bm_suffix}_N{self.ncol}",
         )
         return {
             "dir": run_dir,
@@ -227,7 +218,8 @@ class PIKKTTypeIModel(MatrixModel):
     def extra_config_lines(self) -> list[str]:
         return [
             f"  Coupling g               = {self.g}",
-            f"  SUSY breaking parameter eta = {self.eta}",
+            f"  Fermion mass             = {self.fermion_mass}",
+            f"  Boson mass               = {self.boson_mass}",
         ]
 
     def run_metadata(self) -> dict[str, object]:
@@ -236,7 +228,8 @@ class PIKKTTypeIModel(MatrixModel):
             {
                 "has_source": self.source is not None,
                 "model_variant": "type1",
-                "eta": self.eta,
+                "fermion_mass": self.fermion_mass,
+                "boson_mass": self.boson_mass,
             }
         )
         if self.massless:

@@ -644,9 +644,9 @@ class TestYangMillsModel(unittest.TestCase):
 
 class TestPIKKTTypeIModel(unittest.TestCase):
 
-    def _make(self, n: int = 2, g: float = 1.0, eta: float = 1.0,
+    def _make(self, n: int = 2, g: float = 1.0, fermion_mass: float = 1.0,
               massless: bool = False) -> PIKKTTypeIModel:
-        return PIKKTTypeIModel(ncol=n, couplings=[g], eta=eta, massless=massless)
+        return PIKKTTypeIModel(ncol=n, couplings=[g], fermion_mass=fermion_mass, massless=massless)
 
     def test_nmat_is_4(self):
         model = self._make()
@@ -689,11 +689,11 @@ class TestPIKKTTypeIModel(unittest.TestCase):
         inner = torch.einsum("bij,bji->", F, dX).real
         self.assertAlmostEqual(inner.item(), fd.item(), places=4)
 
-    def test_eta_changes_potential(self):
+    def test_fermion_mass_changes_potential(self):
         n = 2
         X = random_hermitian(n, batchsize=4)
-        m1 = PIKKTTypeIModel(ncol=n, couplings=[1.0], eta=1.0)
-        m2 = PIKKTTypeIModel(ncol=n, couplings=[1.0], eta=2.0)
+        m1 = PIKKTTypeIModel(ncol=n, couplings=[1.0], fermion_mass=1.0)
+        m2 = PIKKTTypeIModel(ncol=n, couplings=[1.0], fermion_mass=2.0)
         m1.set_state(X.clone()); m2.set_state(X.clone())
         self.assertNotAlmostEqual(m1.potential().real.item(), m2.potential().real.item(), places=5)
 
@@ -851,13 +851,11 @@ class TestHMC(unittest.TestCase):
         acc_new = update(acc, params, model)
         self.assertGreaterEqual(acc_new, acc)
 
-    def test_update_with_always_reject(self):
-        """reject_prob=0.0 means never apply Metropolis; dH≤0 configs always accepted."""
+    def test_update_state_remains_hermitian(self):
+        """Model state must remain valid Hermitian after an update step."""
         model = self._make_model()
         params = HMCParams(dt=1e-5, nsteps=2)
-        # With very small dt the proposal energy is close to current; some may still be accepted
-        acc = update(0, params, model, reject_prob=0.0)
-        # Regardless: model state must remain valid Hermitian
+        update(0, params, model)
         X = model.get_state()
         torch.testing.assert_close(X, dagger(X), rtol=1e-8, atol=1e-8)
 

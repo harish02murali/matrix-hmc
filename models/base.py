@@ -110,13 +110,18 @@ class MatrixModel:
         torch.save({"X": self.get_state()}, ckpt_path)
 
     def force(self, X: torch.Tensor | None = None) -> torch.Tensor:
-        """Compute the HMC force ``-dV/dX`` via autograd.
+        """Compute ``+dV/dX`` via autograd for use in the leapfrog integrator.
+
+        Returns the positive gradient of the potential (not the negated force).
+        The leapfrog integrator calls ``mom -= dt * force(X)``, which correctly
+        implements ``dP/dt = -dV/dX``.  Custom subclass overrides must follow
+        the same convention and return ``+dV/dX``.
 
         Calls :meth:`potential` with ``requires_grad=True`` and uses
         :func:`torch.Tensor.backward` to obtain the gradient.  If
         :attr:`is_hermitian` is ``True`` the gradient is projected to its
         Hermitian part; if :attr:`is_traceless` is ``True`` the trace is
-        removed, ensuring the force lies in the correct Lie-algebra subspace.
+        removed, ensuring the result lies in the correct Lie-algebra subspace.
 
         Args:
             X: Configuration to differentiate at.  Defaults to the current

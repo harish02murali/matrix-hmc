@@ -75,7 +75,7 @@ class OneMatrixPolynomialModel(MatrixModel):
         return eigs, corrs
     
     def load_fresh(self) -> None:
-        """Load a fresh configuration (zero matrices)."""
+        """Load a fresh configuration initialised to ``-2I`` to avoid the local maximum at ``X=0``."""
         X = torch.stack([-2 * torch.eye(self.ncol, dtype=config.dtype, device=config.device) for _ in range(self.nmat)])
         # X = torch.zeros((self.nmat, self.ncol, self.ncol), dtype=config.dtype, device=config.device)
         self.set_state(X)

@@ -52,7 +52,7 @@ def parse_source(
     raise ValueError(f"source must be shape (N,) or (nmat,N,N), got {s.shape}")
 
 
-def source_grad_inplace(source: torch.Tensor, grad: list, ncol: int, g: float) -> None:
+def source_grad_inplace(source: torch.Tensor, grad: torch.Tensor, ncol: int, g: float) -> None:
     """Add the external-source contribution to the analytic gradient in-place.
 
     The linear source term in the action is ``-(N/sqrt(g)) Tr(J X)`` so its

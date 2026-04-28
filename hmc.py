@@ -48,13 +48,14 @@ def leapfrog(X: torch.Tensor, hmc_params: HMCParams, model: Any) -> tuple[torch.
     """Run a symplectic leapfrog trajectory from configuration *X*.
 
     Momenta are refreshed by drawing from :func:`~matrix_hmc.algebra.random_hermitian`
-    at the start of each trajectory.  The integrator uses the velocity Verlet
-    (leapfrog) scheme::
+    at the start of each trajectory.  The integrator uses the BAB (position-first)
+    leapfrog scheme::
 
-        P_{1/2} = P_0 - (dt/2) F(X_0)
-        X_k     = X_{k-1} + dt P_{k-1/2}     for k = 1, ..., nsteps-1
-        P_{k+1/2} = P_{k-1/2} - dt F(X_k)
-        X_final = X_{n-1} + (dt/2) P_final
+        X_{1/2} = X_0 + (dt/2) P_0
+        for k = 1, ..., nsteps:
+            P_k     = P_{k-1} - dt F(X_{k-1/2})
+            X_{k+1/2} = X_{k-1/2} + dt P_k       [full step, except last]
+        X_final = X_{nsteps-1/2} + (dt/2) P_nsteps
 
     If the model implements ``begin_trajectory(X)`` it is called before
     integrating; ``end_trajectory(accepted)`` is **not** called here (see
@@ -97,7 +98,7 @@ def leapfrog(X: torch.Tensor, hmc_params: HMCParams, model: Any) -> tuple[torch.
     return X, ham_init, ham_final
 
 
-def update(acc_count: int, hmc_params: HMCParams, model: Any, reject_prob: float = 1.0):
+def update(acc_count: int, hmc_params: HMCParams, model: Any):
     """Run one HMC trajectory and apply a Metropolis accept/reject step.
 
     The model's internal state is updated in-place: on acceptance ``model.set_state``
@@ -109,9 +110,6 @@ def update(acc_count: int, hmc_params: HMCParams, model: Any, reject_prob: float
         hmc_params: Leapfrog integrator parameters.
         model: A :class:`~matrix_hmc.models.base.MatrixModel` instance whose
             state will be mutated.
-        reject_prob: Rescales the Metropolis probability by this factor so that
-            ``p_accept = min(1, reject_prob * exp(-dH))``.  A value of 1.0
-            (default) gives standard HMC.
 
     Returns:
         Updated acceptance counter ``acc_count``.
@@ -125,10 +123,8 @@ def update(acc_count: int, hmc_params: HMCParams, model: Any, reject_prob: float
     finite_dh = np.isfinite(dH)
 
     accept = bool(finite_h0 and finite_h1 and finite_dh)
-    if accept and reject_prob > 0.0:
-        r = random.uniform(0.0, reject_prob)
-        if dH > 0.0:
-            accept = (-dH) > math.log(r)
+    if accept and dH > 0.0:
+        accept = (-dH) > math.log(random.random())
 
     if accept:
         model.set_state(X_new)

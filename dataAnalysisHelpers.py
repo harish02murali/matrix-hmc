@@ -5,13 +5,17 @@ from pathlib import Path
 import numpy as np
 import torch
 
-DATA_PATH = Path(os.environ.get("MATRIX_HMC_DATA"))
+def _default_data_path() -> Path:
+    return Path(os.environ.get("MATRIX_HMC_DATA") or Path.cwd())
+
+
+DATA_PATH = _default_data_path()
 
 class RunRecord:
     """Lightweight container for a single simulation run."""
 
-    def __init__(self, run: str | Path, *, base_path: Path | str = DATA_PATH, load_checkpoint: bool = True) -> None:
-        base = Path(base_path)
+    def __init__(self, run: str | Path, *, base_path: Path | str | None = None, load_checkpoint: bool = True) -> None:
+        base = Path(base_path) if base_path is not None else _default_data_path()
         path = Path(run)
         if not path.is_dir():
             path = base / run
@@ -89,8 +93,15 @@ class RunRecord:
 
 
 def jackknife_error(values, window_size: int = 1):
-    """Return mean and jackknife 1-sigma error for 1D samples with optional binning."""
-    data = np.asarray(values, dtype=np.float64).ravel()
+    """Return mean and jackknife 1-sigma error for 1D samples with optional binning.
+
+    For complex input the returned error is complex: its real and imaginary parts
+    are the jackknife errors on the real and imaginary components respectively.
+    """
+    raw = np.asarray(values).ravel()
+    is_complex = np.iscomplexobj(raw)
+    data = raw.astype(np.complex128 if is_complex else np.float64)
+
     if window_size < 1:
         raise ValueError("window_size must be >= 1")
 
@@ -105,8 +116,17 @@ def jackknife_error(values, window_size: int = 1):
         raise ValueError("Jackknife requires at least two samples after windowing.")
 
     stat = data.mean()
-    jackknife_samples = (stat * n - data) / (n - 1)
-    error = np.sqrt((n - 1) * np.mean((jackknife_samples - jackknife_samples.mean()) ** 2))
+    jk_samples = (stat * n - data) / (n - 1)
+    delta = jk_samples - jk_samples.mean()
+
+    if is_complex:
+        error = (
+            np.sqrt((n - 1) * np.mean(delta.real ** 2))
+            + 1j * np.sqrt((n - 1) * np.mean(delta.imag ** 2))
+        )
+    else:
+        error = np.sqrt((n - 1) * np.mean(delta ** 2))
+
     return stat, error
 
 def standardize(values):

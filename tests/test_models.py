@@ -72,7 +72,7 @@ class TestPIKKT4DTypeI(unittest.TestCase):
 
     def test_dry_run_eta_deformation(self):
         # matrix-hmc --model pikkt4d_type1 --ncol 50 --coupling 150 --eta 0.5 --step-size 1.5 --nsteps 250
-        model = PIKKTTypeIModel(ncol=50, couplings=[150.0], eta=0.5)
+        model = PIKKTTypeIModel(ncol=50, couplings=[150.0], fermion_mass=0.5)
         self.assertIs(_run(model, step_size=1.5, nsteps=250, niters=400), model)
 
     def test_dry_run_massless(self):
