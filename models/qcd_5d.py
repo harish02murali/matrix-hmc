@@ -1,4 +1,4 @@
-"""4D Euclidean QCD-like matrix model with 4 adjoint bosons and 1 Dirac fermion."""
+"""5D Euclidean QCD-like matrix model with 5 adjoint bosons and 1 Dirac fermion."""
 
 from __future__ import annotations
 
@@ -17,21 +17,23 @@ from matrix_hmc.algebra import (
 from matrix_hmc.models.base import MatrixModel
 from matrix_hmc.models.utils import _commutator_action_sum, parse_source, _anticommutator_action_sum
 
-model_name = "qcd_4d"
+model_name = "qcd_5d"
 
 
-def _gamma_euclidean_4d(device, dtype) -> torch.Tensor:
-    """Return Γ^1,...,Γ^4 (Euclidean, eq. D.12 + D.16 of the reference).
+def _gamma_euclidean_5d(device, dtype) -> torch.Tensor:
+    """Return Γ^1,...,Γ^5 for the 5D Euclidean Clifford algebra.
 
-    Γ^1 = σ^3 ⊗ I_2
-    Γ^2 = σ^1 ⊗ σ^3
-    Γ^3 = σ^1 ⊗ σ^1
-    Γ^4 = iΓ^0_Mink = -(σ^2 ⊗ I_2)
+    Γ^1,...,Γ^4 are the same 4×4 matrices as in the 4D model.
+    Γ^5 = Γ^1 Γ^2 Γ^3 Γ^4, which satisfies:
+      - Hermitian
+      - (Γ^5)^2 = I
+      - {Γ^5, Γ^μ} = 0  for μ = 1,...,4
 
-    All four are Hermitian and satisfy {Γ^I, Γ^J} = 2δ^{IJ}.
+    Together {Γ^I, Γ^J} = 2δ^{IJ} for I,J = 1,...,5, giving the
+    irreducible 4×4 representation of the d=5 Euclidean Clifford algebra.
 
     Returns:
-        Tensor of shape (4, 4, 4).
+        Tensor of shape (5, 4, 4).
     """
     s1 = torch.tensor([[0.0, 1.0], [1.0, 0.0]], dtype=dtype, device=device)
     s2 = torch.tensor([[0.0, -1j], [1j, 0.0]], dtype=dtype, device=device)
@@ -41,55 +43,54 @@ def _gamma_euclidean_4d(device, dtype) -> torch.Tensor:
     g1 = torch.kron(s3, I2)
     g2 = torch.kron(s1, s3)
     g3 = torch.kron(s1, s1)
-    # Γ^4 = i Γ^0_Mink,  Γ^0_Mink = i σ^2 ⊗ I  =>  Γ^4 = i(i σ^2 ⊗ I) = -(σ^2 ⊗ I)
     g4 = -torch.kron(s2, I2)
+    g5 = g1 @ g2 @ g3 @ g4
 
-    return torch.stack([g1, g2, g3, g4], dim=0)  # (4, 4, 4)
+    return torch.stack([g1, g2, g3, g4, g5], dim=0)  # (5, 4, 4)
 
 
-def _qcd4d_logdet(
+def _qcd5d_logdet(
     X: torch.Tensor,
     gammas: torch.Tensor,
     massless: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Compute (sign, log|det K|) for the 4D QCD fermion matrix.
+    """Compute (sign, log|det K|) for the 5D QCD fermion matrix.
 
-    Massive:  K = I_{4N²} + Σ_μ Γ^μ ⊗ ad_{X_μ}
-    Massless: K = Σ_μ Γ^μ ⊗ ad_{X_μ}  with trace mode lifted per spinor block.
+    Massive:  K = I_{4N²} + Σ_{μ=1}^5 Γ^μ ⊗ ad_{X_μ}
+    Massless: K = Σ_{μ=1}^5 Γ^μ ⊗ ad_{X_μ}  with trace mode lifted.
 
-    The adjoint action ad_{X_μ} = i[X_μ, .] is anti-Hermitian for Hermitian X_μ.
-    Eigenvalues of K are 1 + iλ (λ real), paired as (1+iλ, 1-iλ) by γ_5, so
-    det(K) = Π(1 + λ²) > 0 always — no sign problem.
+    D = Σ_μ Γ^μ ⊗ ad_{X_μ} is anti-Hermitian (each Γ^μ Hermitian, each
+    ad_{X_μ} anti-Hermitian), so eigenvalues of K are 1+iλ with λ real,
+    giving |eigenvalue|² = 1+λ² > 0.  The fermionic determinant is positive
+    for all configurations (verified numerically).
     """
     N = X.shape[-1]
     N2 = N * N
     dtype = X.dtype
     device = X.device
 
-    # ad_{X_μ} = i[X_μ, .] (anti-Hermitian for Hermitian X_μ)
-    ad_ops = [ad_matrix(X[mu]) for mu in range(4)]
-
-    # D = Σ_μ Γ^μ ⊗ ad_{X_μ}  (anti-Hermitian)
-    D = sum(torch.kron(gammas[mu], ad_ops[mu]) for mu in range(4))
+    ad_ops = [ad_matrix(X[mu]) for mu in range(5)]
+    D = sum(torch.kron(gammas[mu], ad_ops[mu]) for mu in range(5))
 
     if massless:
-        # Lift the 4 trace-direction zero modes (one per spinor component)
-        # by adding the trace projector to each diagonal N²×N² block.
+        # 4 trace-direction zero modes (one per spinor component), same as 4D.
         K = D
         for alpha in range(4):
-            add_trace_projector_inplace(K[alpha * N2:(alpha + 1) * N2, alpha * N2:(alpha + 1) * N2], N)
+            add_trace_projector_inplace(
+                K[alpha * N2:(alpha + 1) * N2, alpha * N2:(alpha + 1) * N2], N
+            )
     else:
         K = get_eye_cached(4 * N2, device, dtype) + D
 
     result = torch.linalg.slogdet(K)
     if result[0].real.item() < 0.0:
         import warnings
-        warnings.warn(f"qcd_4d: det(K) sign = {result[0].item():.6f} (expected +1, sign problem?)", RuntimeWarning, stacklevel=2)
+        warnings.warn(f"qcd_5d: det(K) sign = {result[0].item():.6f} (expected +1, sign problem?)", RuntimeWarning, stacklevel=2)
     return result
 
 
-class QCD4DModel(MatrixModel):
-    """4D Euclidean QCD-like matrix model.
+class QCD5DModel(MatrixModel):
+    """5D Euclidean QCD-like matrix model.
 
     Action (before fermion integration):
 
@@ -101,11 +102,9 @@ class QCD4DModel(MatrixModel):
             + \\bar{\\psi}(1 + i \\Gamma^\\mu \\,[X_\\mu, .]) \\psi
             \\right]
 
-    After integrating out the Dirac fermion the partition function acquires
-    a factor ``det K`` with ``K = I + Σ_μ Γ^μ ⊗ ad_{X_μ}``.  The adjoint
-    action ``ad_{X_μ} = i[X_μ, .]`` is anti-Hermitian, so K has eigenvalues
-    ``1 + iλ`` (λ real).  The γ_5 symmetry pairs them as ``(1+iλ, 1-iλ)``,
-    giving ``det K = Π(1 + λ²) > 0`` for all configurations — no sign problem.
+    with μ running over 1,...,5.  After integrating out the Dirac fermion
+    the partition function acquires ``det K`` with
+    ``K = I + Σ_{μ=1}^5 Γ^μ ⊗ ad_{X_μ}``.
 
     Args:
         ncol: Matrix size N.
@@ -113,7 +112,7 @@ class QCD4DModel(MatrixModel):
         source: Optional external source.
         boson_mass: Coefficient of Tr(X_μ²). Default 1.0.
         massless: If True, drop Tr(X_μ²) and the identity in K (lift trace
-            mode).  Default False.
+            modes). Default False.
     """
 
     model_name = model_name
@@ -126,7 +125,7 @@ class QCD4DModel(MatrixModel):
         boson_mass: float = 1.0,
         massless: bool = False,
     ) -> None:
-        super().__init__(nmat=4, ncol=ncol)
+        super().__init__(nmat=5, ncol=ncol)
         self.couplings = couplings
         self.g = couplings[0]
         self.source = parse_source(source, self.nmat, config.device, config.dtype)
@@ -135,7 +134,7 @@ class QCD4DModel(MatrixModel):
         self.is_hermitian = True
         self.is_traceless = True
 
-        self._gammas = _gamma_euclidean_4d(config.device, config.dtype)
+        self._gammas = _gamma_euclidean_5d(config.device, config.dtype)
 
     def load_fresh(self):
         X = 0.01 * random_hermitian(self.ncol, batchsize=self.nmat)
@@ -151,7 +150,7 @@ class QCD4DModel(MatrixModel):
         )
         bos = (comm_sq + trace_sq) * (self.ncol / self.g)
 
-        _, log_abs_det = _qcd4d_logdet(X, self._gammas, massless=self.massless)
+        _, log_abs_det = _qcd5d_logdet(X, self._gammas, massless=self.massless)
         ferm = -log_abs_det.real
 
         src = torch.tensor(0.0, dtype=X.dtype, device=X.device)
@@ -173,9 +172,9 @@ class QCD4DModel(MatrixModel):
             moments = torch.einsum("aij,bji->ab", X, X).real
 
             parts = [
-				np.array([anticomm_raw, comm_raw], dtype=np.float64),
-				moments.detach().cpu().numpy().astype(np.float64).reshape(-1),
-			]
+                np.array([anticomm_raw, comm_raw], dtype=np.float64),
+                moments.detach().cpu().numpy().astype(np.float64).reshape(-1),
+            ]
 
             corrs = np.concatenate(parts)
 
@@ -219,7 +218,7 @@ class QCD4DModel(MatrixModel):
 
 
 def build_model(args):
-    return QCD4DModel(
+    return QCD5DModel(
         ncol=args.ncol,
         couplings=args.coupling,
         source=args.source,

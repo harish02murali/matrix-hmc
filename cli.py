@@ -51,6 +51,8 @@ FIXED_NMAT_MODELS: dict[str, int] = {
     "pikkt4d_type2": 4,
     "pikkt10d": 10,
     "susyym_3d": 3,
+    "qcd_4d": 4,
+    "qcd_5d": 5,
 }
 
 # Per-model sensible starting defaults.  These are applied *before* the config
@@ -406,6 +408,8 @@ def _build_parser() -> argparse.ArgumentParser:
     t1 = parser.add_argument_group("Type I  (--model pikkt4d_type1)")
     t1.add_argument("--massless", action="store_true",
                     help="Remove mass / Myers term (bare IKKT / Pfaffian).")
+    t1.add_argument("--det-coeff", type=float, default=1.0, dest="det_coeff",
+                    help="Multiplicative coefficient for the fermionic determinant contribution.")
 
     t2 = parser.add_argument_group("Type II / 10D  (--model pikkt4d_type2 or pikkt10d)")
     t2.add_argument("--spin", type=float, default=None,

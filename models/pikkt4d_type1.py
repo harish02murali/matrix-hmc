@@ -27,6 +27,7 @@ def build_model(args):
         fermion_mass=getattr(args, "fermion_mass", 1.0),
         boson_mass=getattr(args, "boson_mass", 1.0),
         massless=getattr(args, "massless", False),
+        det_coeff=getattr(args, "det_coeff", 1.0),
     )
 
 
@@ -121,7 +122,7 @@ class PIKKTTypeIModel(MatrixModel):
 
     model_name = model_name
 
-    def __init__(self, ncol: int, couplings: list, source: np.ndarray | None = None, fermion_mass: float = 1.0, boson_mass: float = 1.0, massless: bool = False) -> None:
+    def __init__(self, ncol: int, couplings: list, source: np.ndarray | None = None, fermion_mass: float = 1.0, boson_mass: float = 1.0, massless: bool = False, det_coeff: float = 1.0) -> None:
         super().__init__(nmat=4, ncol=ncol)
         self.couplings = couplings
         self.g = self.couplings[0]
@@ -129,6 +130,7 @@ class PIKKTTypeIModel(MatrixModel):
         self.fermion_mass = float(fermion_mass)
         self.boson_mass = float(boson_mass)
         self.massless = massless
+        self.det_coeff = float(det_coeff)
         self.is_hermitian = True
         self.is_traceless = True
 
@@ -160,6 +162,8 @@ class PIKKTTypeIModel(MatrixModel):
         bos = bos + trace_sq
 
         det = -0.5 * self._log_det_fn(X)[1].real
+        det = self.det_coeff * det
+
         src = torch.tensor(0.0, dtype=X.dtype, device=X.device)
         if self.source is not None:
             src = -(self.ncol / self.g ** 0.5) * torch.einsum("iab,iba->", self.source, X)
