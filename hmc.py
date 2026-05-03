@@ -151,18 +151,17 @@ def update(acc_count: int, hmc_params: HMCParams, model: Any):
 def thermalize(model: Any, hmc_params: HMCParams, steps: int = 10) -> None:
     """Run short, highly-accepting trajectories to drive the system toward equilibrium.
 
-    Uses a modified :class:`HMCParams` with ``2x nsteps`` and ``dt / 20`` so that
-    the trajectories stay cheap and almost always accept, gradually moving away from
-    the initial configuration without wasting many evaluations.
+    Uses the same ``nsteps`` as the production run but with ``dt`` scaled down to
+    ``0.05 * dt`` (i.e. 5% of the production step size) so trajectories almost
+    always accept and gently move the field away from the initial configuration.
 
     Args:
         model: A :class:`~matrix_hmc.models.base.MatrixModel` instance.
-        hmc_params: Base integrator parameters whose ``nsteps`` and ``dt`` are
-            rescaled internally.
+        hmc_params: Base integrator parameters (``nsteps`` is kept; ``dt`` is scaled).
         steps: Number of thermalization trajectories to run (default: ``10``).
     """
     print("Thermalization steps, accept most jumps")
-    therm_params = replace(hmc_params, nsteps=int(hmc_params.nsteps * 2), dt=hmc_params.dt / 20.0)
+    therm_params = replace(hmc_params, dt=hmc_params.dt * 0.05)
     acc_count = 0
     for _ in range(steps):
         acc_count = update(acc_count, therm_params, model)

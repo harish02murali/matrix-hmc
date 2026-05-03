@@ -38,6 +38,7 @@ def build_model(args):
 		fermion_mass=getattr(args, "fermion_mass", 1.0),
 		boson_mass=getattr(args, "boson_mass", 1.0),
 		pfaffian_every=getattr(args, "pfaffian_every", None),
+		det_coeff=getattr(args, "det_coeff", 1.0),
 	)
 
 
@@ -78,12 +79,14 @@ class SUSYYM3DModel(MatrixModel):
 		fermion_mass: float = 1.0,
 		boson_mass: float = 1.0,
 		pfaffian_every: int | None = None,
+		det_coeff: float = 1.0,
 	) -> None:
 		super().__init__(nmat=3, ncol=ncol)
 		self.couplings = couplings
 		self.g = self.couplings[0]
 		self.fermion_mass = float(fermion_mass)
 		self.boson_mass = float(boson_mass)
+		self.det_coeff = float(det_coeff)
 		self.pfaffian_every = int(pfaffian_every) if pfaffian_every is not None else None
 		self._measure_calls = 0
 		self.source = parse_source(source, self.nmat, config.device, config.dtype)
@@ -129,7 +132,7 @@ class SUSYYM3DModel(MatrixModel):
 		bos = -0.5 * _commutator_action_sum(X)
 		if self.boson_mass != 0.0:
 			bos += self.boson_mass * torch.einsum("bij,bji->", X, X)
-		fermion = -0.5 * torch.slogdet(self.fermion_matrix(X))[1].real
+		fermion = self.det_coeff * (-0.5 * torch.slogdet(self.fermion_matrix(X))[1].real)
 
 		src = torch.tensor(0.0, dtype=X.dtype, device=X.device)
 		if self.source is not None:
@@ -190,6 +193,8 @@ class SUSYYM3DModel(MatrixModel):
 			f"  Fermion mass   = {self.fermion_mass}",
 			f"  Boson mass     = {self.boson_mass}",
 		]
+		if self.det_coeff != 1.0:
+			lines.append(f"  Det coeff      = {self.det_coeff}")
 		if self.pfaffian_every is not None:
 			lines.append(f"  Pfaffian every = {self.pfaffian_every}")
 		return lines
@@ -202,6 +207,7 @@ class SUSYYM3DModel(MatrixModel):
 				"model_variant": "susyym_3d",
 				"fermion_mass": self.fermion_mass,
 				"boson_mass": self.boson_mass,
+				"det_coeff": self.det_coeff,
 				"pfaffian_every": self.pfaffian_every,
 			}
 		)

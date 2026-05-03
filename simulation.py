@@ -18,7 +18,7 @@ import numpy as np
 import torch
 
 from matrix_hmc import config as _config
-from matrix_hmc.hmc import HMCParams, update
+from matrix_hmc.hmc import HMCParams, thermalize, update
 from matrix_hmc.models.base import MatrixModel
 
 _BUILTIN_MODEL_DIR = Path(__file__).resolve().parent / "models"
@@ -231,6 +231,7 @@ def run(
 
     if not resumed:
         _ensure_output_slots([paths["eigs"], paths["corrs"]], force=True, allow_existing=False)
+        thermalize(model, hmc_params, steps=10)
 
     acc_count = 0
     ev_buf: list[np.ndarray] = []

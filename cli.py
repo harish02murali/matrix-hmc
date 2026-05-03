@@ -405,11 +405,11 @@ def _build_parser() -> argparse.ArgumentParser:
     s3d.add_argument("--boson-mass", type=float, default=1.0, dest="boson_mass",
                      help="Coefficient of the Tr(X_i²) mass term.")
 
-    t1 = parser.add_argument_group("Type I  (--model pikkt4d_type1)")
+    t1 = parser.add_argument_group("Type I / QCD  (--model pikkt4d_type1, qcd_5d, susyym_3d)")
     t1.add_argument("--massless", action="store_true",
                     help="Remove mass / Myers term (bare IKKT / Pfaffian).")
     t1.add_argument("--det-coeff", type=float, default=1.0, dest="det_coeff",
-                    help="Multiplicative coefficient for the fermionic determinant contribution.")
+                    help="Multiplicative coefficient for the fermionic log-det contribution (pikkt4d_type1, qcd_5d, susyym_3d).")
 
     t2 = parser.add_argument_group("Type II / 10D  (--model pikkt4d_type2 or pikkt10d)")
     t2.add_argument("--spin", type=float, default=None,

@@ -124,6 +124,7 @@ class QCD5DModel(MatrixModel):
         source: np.ndarray | None = None,
         boson_mass: float = 1.0,
         massless: bool = False,
+        det_coeff: float = 1.0,
     ) -> None:
         super().__init__(nmat=5, ncol=ncol)
         self.couplings = couplings
@@ -131,6 +132,7 @@ class QCD5DModel(MatrixModel):
         self.source = parse_source(source, self.nmat, config.device, config.dtype)
         self.boson_mass = float(boson_mass)
         self.massless = massless
+        self.det_coeff = float(det_coeff)
         self.is_hermitian = True
         self.is_traceless = True
 
@@ -151,7 +153,7 @@ class QCD5DModel(MatrixModel):
         bos = (comm_sq + trace_sq) * (self.ncol / self.g)
 
         _, log_abs_det = _qcd5d_logdet(X, self._gammas, massless=self.massless)
-        ferm = -log_abs_det.real
+        ferm = -self.det_coeff * log_abs_det.real
 
         src = torch.tensor(0.0, dtype=X.dtype, device=X.device)
         if self.source is not None:
@@ -204,6 +206,7 @@ class QCD5DModel(MatrixModel):
             f"  Coupling g               = {self.g}",
             f"  Boson mass               = {self.boson_mass}",
             f"  Massless                 = {self.massless}",
+            f"  Det coefficient          = {self.det_coeff}",
         ]
 
     def run_metadata(self) -> dict[str, object]:
@@ -212,6 +215,7 @@ class QCD5DModel(MatrixModel):
             {
                 "boson_mass": self.boson_mass,
                 "massless": self.massless,
+                "det_coeff": self.det_coeff,
             }
         )
         return meta
@@ -224,4 +228,5 @@ def build_model(args):
         source=args.source,
         boson_mass=getattr(args, "boson_mass", 1.0),
         massless=getattr(args, "massless", False),
+        det_coeff=getattr(args, "det_coeff", 1.0),
     )
